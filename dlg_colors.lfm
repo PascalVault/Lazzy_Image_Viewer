@@ -1,0 +1,143 @@
+object ColorsDlg: TColorsDlg
+  Left = 540
+  Height = 233
+  Top = 548
+  Width = 424
+  Caption = 'Colors'
+  ClientHeight = 233
+  ClientWidth = 424
+  LCLVersion = '3.0.0.3'
+  object RadioGroup1: TRadioGroup
+    Left = 168
+    Height = 208
+    Top = 16
+    Width = 129
+    AutoFill = True
+    Caption = 'Dithering'
+    ChildSizing.LeftRightSpacing = 6
+    ChildSizing.EnlargeHorizontal = crsHomogenousChildResize
+    ChildSizing.EnlargeVertical = crsHomogenousChildResize
+    ChildSizing.ShrinkHorizontal = crsScaleChilds
+    ChildSizing.ShrinkVertical = crsScaleChilds
+    ChildSizing.Layout = cclLeftToRightThenTopToBottom
+    ChildSizing.ControlsPerLine = 1
+    ClientHeight = 188
+    ClientWidth = 125
+    ItemIndex = 1
+    Items.Strings = (
+      'None'
+      'Floyd-Steinberg'
+      'Burkes'
+      'Stucki'
+      'Jarvis'
+      'Atkinson'
+      'Sierra 2'
+      'Sierra 3'
+      'Sierra 4'
+    )
+    TabOrder = 0
+  end
+  object Button1: TButton
+    Left = 320
+    Height = 25
+    Top = 24
+    Width = 75
+    Caption = 'OK'
+    TabOrder = 1
+    OnClick = Button1Click
+  end
+  object GroupBox1: TGroupBox
+    Left = 16
+    Height = 208
+    Top = 16
+    Width = 137
+    Caption = 'Colors'
+    ClientHeight = 188
+    ClientWidth = 133
+    TabOrder = 2
+    object Edit1: TEdit
+      Left = 56
+      Height = 23
+      Top = 152
+      Width = 56
+      TabOrder = 0
+      Text = '256'
+    end
+    object UpDown1: TUpDown
+      Left = 112
+      Height = 23
+      Top = 152
+      Width = 17
+      Associate = Edit1
+      Max = 256
+      Min = 2
+      Position = 256
+      TabOrder = 1
+    end
+    object RadioButton1: TRadioButton
+      Tag = 2
+      Left = 8
+      Height = 19
+      Top = 11
+      Width = 24
+      Caption = '2'
+      TabOrder = 2
+    end
+    object RadioButton2: TRadioButton
+      Tag = 16
+      Left = 8
+      Height = 19
+      Top = 32
+      Width = 30
+      Caption = '16'
+      TabOrder = 3
+    end
+    object RadioButton3: TRadioButton
+      Tag = 32
+      Left = 8
+      Height = 19
+      Top = 56
+      Width = 30
+      Caption = '32'
+      TabOrder = 4
+    end
+    object RadioButton4: TRadioButton
+      Tag = 64
+      Left = 8
+      Height = 19
+      Top = 80
+      Width = 30
+      Caption = '64'
+      TabOrder = 5
+    end
+    object RadioButton5: TRadioButton
+      Tag = 128
+      Left = 8
+      Height = 19
+      Top = 104
+      Width = 36
+      Caption = '128'
+      TabOrder = 6
+    end
+    object RadioButton6: TRadioButton
+      Tag = 256
+      Left = 8
+      Height = 19
+      Top = 128
+      Width = 36
+      Caption = '256'
+      Checked = True
+      TabOrder = 7
+      TabStop = True
+    end
+    object RadioButton7: TRadioButton
+      Tag = 1
+      Left = 8
+      Height = 19
+      Top = 152
+      Width = 41
+      Caption = '--->'
+      TabOrder = 8
+    end
+  end
+end

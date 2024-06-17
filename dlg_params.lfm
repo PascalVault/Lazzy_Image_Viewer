@@ -1,0 +1,36 @@
+object ParamsDlg: TParamsDlg
+  Left = 622
+  Height = 115
+  Top = 214
+  Width = 289
+  Caption = 'Filter'
+  ClientHeight = 115
+  ClientWidth = 289
+  LCLVersion = '3.0.0.3'
+  object ScrollBar1: TScrollBar
+    Left = 16
+    Height = 17
+    Top = 24
+    Width = 200
+    Min = -100
+    PageSize = 0
+    TabOrder = 0
+    OnChange = ScrollBar1Change
+  end
+  object Label1: TLabel
+    Left = 233
+    Height = 15
+    Top = 26
+    Width = 6
+    Caption = '0'
+  end
+  object Button1: TButton
+    Left = 200
+    Height = 25
+    Top = 72
+    Width = 75
+    Caption = 'OK'
+    TabOrder = 1
+    OnClick = Button1Click
+  end
+end
