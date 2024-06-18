@@ -12,6 +12,7 @@
       <XPManifest>
         <DpiAware Value="True"/>
       </XPManifest>
+      <Icon Value="0"/>
     </General>
     <BuildModes>
       <Item Name="Default" Default="True"/>
@@ -77,6 +78,12 @@
         <IsPartOfProject Value="True"/>
         <ComponentName Value="InfoDlg"/>
         <HasResources Value="True"/>
+        <ResourceBaseClass Value="Form"/>
+      </Unit>
+      <Unit>
+        <Filename Value="dlg_formats.pas"/>
+        <IsPartOfProject Value="True"/>
+        <ComponentName Value="FormatsDlg"/>
         <ResourceBaseClass Value="Form"/>
       </Unit>
     </Units>

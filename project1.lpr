@@ -11,7 +11,7 @@ uses
   {$ENDIF}
   Interfaces, // this includes the LCL widgetset
   Forms, printer4lazarus, unit1, dlg_colors, dlg_params, dlg_resize, dlg_about,
-  dlg_info
+  dlg_info, dlg_formats
   { you can add units after this };
 
 {$R *.res}
@@ -27,6 +27,7 @@ begin
   Application.CreateForm(TResizeDlg, ResizeDlg);
   Application.CreateForm(TAboutDlg, AboutDlg);
   Application.CreateForm(TInfoDlg, InfoDlg);
+  Application.CreateForm(TFormatsDlg, FormatsDlg);
   Application.Run;
 end.
 

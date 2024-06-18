@@ -1,0 +1,29 @@
+object FormatsDlg: TFormatsDlg
+  Left = 601
+  Height = 290
+  Top = 359
+  Width = 418
+  Caption = 'Supported formats'
+  ClientHeight = 290
+  ClientWidth = 418
+  OnCreate = FormCreate
+  LCLVersion = '3.0.0.3'
+  object SG: TStringGrid
+    Left = 0
+    Height = 256
+    Top = 0
+    Width = 418
+    Align = alClient
+    ColCount = 3
+    TabOrder = 0
+  end
+  object Panel1: TPanel
+    Left = 0
+    Height = 34
+    Top = 256
+    Width = 418
+    Align = alBottom
+    Caption = 'Panel1'
+    TabOrder = 1
+  end
+end

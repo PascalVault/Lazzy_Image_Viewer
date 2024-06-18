@@ -12,7 +12,7 @@ uses
   Classes, SysUtils, Forms, Controls, Graphics, Dialogs, ExtCtrls, ComCtrls, Grids,
   StdCtrls, Buttons, Menus, LCLIntf, LCLType, Clipbrd, Math, {$IFDEF WINDOWS}ShellApi,{$ENDIF}
   PV_Bitmap, PV_BitmapFormats, PV_Filters, Printers, PrintersDlgs, Types,
-  FileUtil, dlg_colors, dlg_resize, dlg_params, dlg_about, dlg_info,
+  FileUtil, dlg_colors, dlg_resize, dlg_params, dlg_about, dlg_info, dlg_formats,
   IntfGraphics, AsyncProcess, FPImage, FPReadJPEG;
 
 const Levels: array of Extended = (0.1, 0.15, 0.20, 0.25, 0.3, 0.5, 0.7, 1, 1.5, 2, 3, 4, 5, 6, 7, 8);
@@ -74,6 +74,7 @@ type
     Contrast_PopEl: TMenuItem;
     Brightness_PopEl: TMenuItem;
     Desaturate_PopEl: TMenuItem;
+    Formats_MenuEl: TMenuItem;
     Negate_PopEl: TMenuItem;
     RotateLeft_PopEl: TMenuItem;
     RotateRight_PopEl: TMenuItem;
@@ -186,6 +187,7 @@ type
       aRect: TRect; aState: TGridDrawState);
     procedure DrawGrid1SelectCell(Sender: TObject; aCol, aRow: Integer;
       var CanSelect: Boolean);
+    procedure Formats_MenuElClick(Sender: TObject);
     procedure FormCreate(Sender: TObject);
     procedure FormDestroy(Sender: TObject);
     procedure FormDropFiles(Sender: TObject; const FileNames: array of string);
@@ -544,6 +546,11 @@ procedure TForm1.DrawGrid1SelectCell(Sender: TObject; aCol, aRow: Integer;
   var CanSelect: Boolean);
 begin
 
+end;
+
+procedure TForm1.Formats_MenuElClick(Sender: TObject);
+begin
+  FormatsDlg.Show;
 end;
 
 procedure TForm1.FormDestroy(Sender: TObject);

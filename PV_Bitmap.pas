@@ -135,7 +135,7 @@ type
      FCount: Integer;
    public
      property Count: Integer read FCount;
-     procedure Item(Index: Integer; out Ext: String; out Reader: TPV_BitmapReader; out Writer: TPV_BitmapWriter);
+     procedure Item(Index: Integer; out Ext,Name: String; out Reader: TPV_BitmapReader; out Writer: TPV_BitmapWriter);
      constructor Create;
      function FindReader(Ext: String; out Format: String): TPV_BitmapReader;
      function FindWriter(Ext: String): TPV_BitmapWriter;
@@ -1103,10 +1103,11 @@ begin
   F.Free;
 end;
 
-procedure TPV_BitmapFormat.Item(Index: Integer; out Ext: String; out
+procedure TPV_BitmapFormat.Item(Index: Integer; out Ext,Name: String; out
   Reader: TPV_BitmapReader; out Writer: TPV_BitmapWriter);
 begin
   Ext := FList[Index].Ext;
+  Name := FList[Index].Name;
   Reader := FList[Index].Reader;
   Writer := FList[Index].Writer;
 end;
@@ -1114,7 +1115,7 @@ end;
 constructor TPV_BitmapFormat.Create;
 begin
   FCount := 0;
-  SetLength(FList, 100);
+  SetLength(FList, 200);
 end;
 
 function TPV_BitmapFormat.FindReader(Ext: String; out Format: String): TPV_BitmapReader;

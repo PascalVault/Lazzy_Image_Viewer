@@ -2,7 +2,7 @@ unit PV_BitmapFormats;
 
 //Lazzy Image Viewer
 //github.com/PascalVault
-//License: MIT
+//License: GNU/GPL
 
 interface
 
@@ -12,6 +12,13 @@ uses Classes, Graphics, SysUtils, Dialogs,
   FPWriteJPEG, FPReadJPEG, FPReadXPM, FPWriteXPM, FPReadPCX, FPReadBMP,
   FPReadPNG, FPReadTGA, FPReadTiff, FPWriteGIF, FPReadGIF, FPReadPSD,
   FPReadXWD, Math;
+
+  type TC64Mem = record
+    Bitmap: array[0..7999] of Byte;
+    ScreenRAM: array[0..999] of Byte;
+    ColorRAM: array[0..999] of Byte;
+    bgColor: Byte;
+  end;
 
 implementation
 
@@ -127,6 +134,107 @@ begin
       Inc(Saved, Count+1);
     end;
   until Saved >= UnpackedSize;
+end;
+
+procedure DecodeMulticolor(Bmp: TPV_Bitmap; Mem: TC64Mem);
+const colodore: array[0..15] of Cardinal = (
+    $000000,$ffffff,$96282e,$5bd6ce,
+    $9f2dad,$41b936,$2724c4,$eff347,
+    $9f4815,$5e3500,$da5f66,$474747,
+    $787878,$91ff84,$6864ff,$aeaeae);
+var Width, Height: Integer;
+    i,j,k: Integer;
+    x,y: Integer;
+    pal: array[0..1999, 0..3] of Byte;
+    R,G,B: Byte;
+begin
+  Bmp.SetSize(320, 200);
+
+  //set C64 palette
+  for i:=0 to 15 do begin
+    B := colodore[i] and $FF;
+    G := (colodore[i] shr 8) and $FF;
+    R := (colodore[i] shr 16) and $FF;
+
+    Bmp.AddPal(R,G,B,255);
+  end;
+
+  //screen ram
+  for i:=0 to 999 do begin
+    G := Mem.ScreenRAM[i];
+
+    pal[i][1] := G shr 4;
+    pal[i][2] := G and $F;
+  end;
+
+  //color ram
+  for i:=0 to 999 do begin
+    G := Mem.ColorRAM[i];
+
+    pal[i][3] := G and $F;
+    pal[i][0] := Mem.bgColor;
+  end;
+
+  i:= 0;
+  for y:=0 to 24 do
+  for x:=0 to 39 do
+  for k:=0 to 7 do begin
+    G := Mem.Bitmap[i];
+    Inc(i);
+
+    for j:=0 to 3 do begin
+      B := GetBits(G, 6-2*j, 2);
+
+      Bmp.SetPal(x*8 + 2*j, y*8 + k, pal[y*40 + x][B]);
+      Bmp.SetPal(x*8 + 2*j+1, y*8 + k, pal[y*40 + x][B]);
+    end;
+  end;
+end;
+
+procedure DecodeHires(Bmp: TPV_Bitmap; Mem: TC64Mem);
+const colodore: array[0..15] of Cardinal = (
+    $000000,$ffffff,$96282e,$5bd6ce,
+    $9f2dad,$41b936,$2724c4,$eff347,
+    $9f4815,$5e3500,$da5f66,$474747,
+    $787878,$91ff84,$6864ff,$aeaeae);
+var Width, Height: Integer;
+    i,j,k: Integer;
+    x,y: Integer;
+    pal: array[0..1999, 0..3] of Byte;
+    R,G,B: Byte;
+begin
+  Bmp.SetSize(320, 200);
+
+  //set C64 palette
+  for i:=0 to 15 do begin
+    B := colodore[i] and $FF;
+    G := (colodore[i] shr 8) and $FF;
+    R := (colodore[i] shr 16) and $FF;
+
+    Bmp.AddPal(R,G,B,255);
+  end;
+
+  //screen ram
+  for i:=0 to 999 do begin
+    G := Mem.ScreenRAM[i];
+
+    pal[i][1] := G shr 4;
+    pal[i][0] := G and $F;
+  end;
+
+  i := 0;
+  for y:=0 to 24 do
+  for x:=0 to 39 do
+  for k:=0 to 7 do begin
+    G := Mem.Bitmap[i];
+    Inc(i);
+
+    for j:=0 to 7 do begin
+      B := GetBits(G, 7-j, 1);
+
+      Bmp.SetPal(x*8 + j, y*8 + k, pal[y*40 + x][B]);
+    end;
+  end;
 end;
 
 function MAC_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
@@ -1754,62 +1862,635 @@ begin
   Writer.Free;
 end;
 
+function DD_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
+var Reader: TPV_Reader;
+    bgColor: Byte;
+    Mem: TC64Mem;
+begin
+  if (Str.Size <> 9218) then Exit(False);
+
+  Reader := TPV_Reader.Create(Str);
+
+  Reader.Offset := 2;
+  Reader.get(Mem.ScreenRAM, 1000);
+
+  Reader.Offset := $0400 + 2;
+  Reader.get(Mem.Bitmap, 8000);
+
+  DecodeHires(Bmp, Mem);
+
+  Reader.Free;
+  Result := True;
+end;
+
+function HIR_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
+var Reader: TPV_Reader;
+    bgColor: Byte;
+    Mem: TC64Mem;
+begin
+  if (Str.Size <> 8002) then Exit(False);
+
+  Reader := TPV_Reader.Create(Str);
+
+  FillChar(Mem.ScreenRAM, 1000, 1);
+  Mem.ScreenRAM[0] := 0;
+
+  Reader.Offset := 2;
+  Reader.get(Mem.Bitmap, 8000);
+
+  DecodeHires(Bmp, Mem);
+
+  Reader.Free;
+  Result := True;
+end;
+
+function FGS_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
+var Reader: TPV_Reader;
+    bgColor: Byte;
+    Mem: TC64Mem;
+begin
+  if (Str.Size <> 8002) then Exit(False);
+
+  Reader := TPV_Reader.Create(Str);
+
+  FillChar(Mem.ScreenRAM, 1000, 1);
+  Mem.ScreenRAM[0] := 0;
+
+  Reader.Offset := 2;
+  Reader.get(Mem.Bitmap, 8000);
+
+  DecodeHires(Bmp, Mem);
+
+  Reader.Free;
+  Result := True;
+end;
+
+function GCD_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
+var Reader: TPV_Reader;
+    bgColor: Byte;
+    Mem: TC64Mem;
+begin
+  if (Str.Size < 8002) or (Str.Size > 10000) then Exit(False);
+
+  Reader := TPV_Reader.Create(Str);
+
+  FillChar(Mem.ScreenRAM, 1000, 1);
+  Mem.ScreenRAM[0] := 0;
+
+  Reader.Offset := 2;
+  Reader.get(Mem.Bitmap, 8000);
+
+  DecodeHires(Bmp, Mem);
+
+  Reader.Free;
+  Result := True;
+end;
+
+function GIH_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
+var Reader: TPV_Reader;
+    bgColor: Byte;
+    Mem: TC64Mem;
+begin
+  if (Str.Size <> 8002) then Exit(False);
+
+  Reader := TPV_Reader.Create(Str);
+
+  FillChar(Mem.ScreenRAM, 1000, 1);
+  Mem.ScreenRAM[0] := 0;
+
+  Reader.Offset := 2;
+  Reader.get(Mem.Bitmap, 8000);
+
+  DecodeHires(Bmp, Mem);
+
+  Reader.Free;
+  Result := True;
+end;
+
+function HED_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
+var Reader: TPV_Reader;
+    bgColor: Byte;
+    Mem: TC64Mem;
+begin
+  if (Str.Size <> 9218) then Exit(False);
+
+  Reader := TPV_Reader.Create(Str);
+
+  Reader.Offset := $2000 + 2;
+  Reader.get(Mem.ScreenRAM, 1000);
+
+  Reader.Offset := 2;
+  Reader.get(Mem.Bitmap, 8000);
+
+  DecodeHires(Bmp, Mem);
+
+  Reader.Free;
+  Result := True;
+end;
+
+function ISH_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
+var Reader: TPV_Reader;
+    bgColor: Byte;
+    Mem: TC64Mem;
+begin
+  if (Str.Size <> 9194) then Exit(False);
+
+  Reader := TPV_Reader.Create(Str);
+
+  Reader.Offset := $2000 + 2;
+  Reader.get(Mem.ScreenRAM, 1000);
+
+  Reader.Offset := 2;
+  Reader.get(Mem.Bitmap, 8000);
+
+  DecodeHires(Bmp, Mem);
+
+  Reader.Free;
+  Result := True;
+end;
+
+function MON_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
+var Reader: TPV_Reader;
+    bgColor: Byte;
+    Mem: TC64Mem;
+begin
+  if (Str.Size < 8000) or (Str.Size > 12000) then Exit(False);
+
+  Reader := TPV_Reader.Create(Str);
+
+  FillChar(Mem.ScreenRAM, 1000, 1);
+
+  Reader.Offset := 2;
+  Reader.get(Mem.Bitmap, 8000);
+
+  Mem.ScreenRAM[0] := 0;
+
+  DecodeHires(Bmp, Mem);
+
+  Reader.Free;
+  Result := True;
+end;
+
 function IPH_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
 var Reader: TPV_Reader;
-    Width, Height: Integer;
-    x,y: Integer;
-    R,G,B,A: Byte;
-    i,j: Integer;
-    pal: array[0..1999, 0..3] of Byte;
-    colodore: array[0..15] of Cardinal = (
-
-    $000000,$ffffff,$96282e,$5bd6ce,
-    $9f2dad,$41b936,$2724c4,$eff347,
-    $9f4815,$5e3500,$da5f66,$474747,
-    $787878,$91ff84,$6864ff,$aeaeae
-
-    );
     bgColor: Byte;
+    Mem: TC64Mem;
 begin
   if (Str.Size <> 9002) then Exit(False);
 
   Reader := TPV_Reader.Create(Str);
 
-  Reader.GetU2;
-
-  Bmp.SetSize(320, 200);
-
   Reader.Offset := $1F40 + 2;
-
-  for i:=0 to 15 do begin
-    B := colodore[i] and $FF;
-    G := (colodore[i] shr 8) and $FF;
-    R := (colodore[i] shr 16) and $FF;
-
-    Bmp.AddPal(R,G,B,255);
-  end;
-
-  //screen ram
-  for i:=0 to 999 do begin
-    G := Reader.GetU;
-
-    pal[i][1] := G shr 4;
-    pal[i][0] := G and $F;
-  end;
+  Reader.get(Mem.ScreenRAM, 1000);
 
   Reader.Offset := 2;
+  Reader.get(Mem.Bitmap, 8000);
 
-  for y:=0 to 24 do
-  for x:=0 to 39 do
-  for j:=0 to 7 do begin
-    G := Reader.GetU;
+  DecodeHires(Bmp, Mem);
 
-    for i:=0 to 7 do begin
-      B := GetBits(G, 7-i, 1);
+  Reader.Free;
+  Result := True;
+end;
 
-      Bmp.SetPal(x*8 + i, y*8 + j, pal[y*40 + x][B]);
-    end;
-  end;
+function A64_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
+var Reader: TPV_Reader;
+    Mem: TC64Mem;
+begin
+  if (Str.Size <> 10242) then Exit(False);
+
+  Reader := TPV_Reader.Create(Str);
+
+  Reader.Offset := $27FF + 2;
+  Mem.BgColor := Reader.GetU;
+
+  Reader.Offset := $2000 + 2;
+  Reader.get(Mem.ScreenRAM, 1000);
+
+  Reader.Offset := $2400 + 2;
+  Reader.get(Mem.ColorRAM, 1000);
+
+  Reader.Offset := $0000 + 2;
+  Reader.get(Mem.Bitmap, 8000);
+
+  DecodeMulticolor(Bmp, Mem);
+
+  Reader.Free;
+  Result := True;
+end;
+
+function CDU_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
+var Reader: TPV_Reader;
+    Mem: TC64Mem;
+begin
+  if (Str.Size <> 10277) then Exit(False);
+
+  Reader := TPV_Reader.Create(Str);
+
+  Reader.Offset := $2821 + 2;
+  Mem.BgColor := Reader.GetU;
+
+  Reader.Offset := $2051 + 2;
+  Reader.get(Mem.ScreenRAM, 1000);
+
+  Reader.Offset := $2439 + 2;
+  Reader.get(Mem.ColorRAM, 1000);
+
+  Reader.Offset := $0111 + 2;
+  Reader.get(Mem.Bitmap, 8000);
+
+  DecodeMulticolor(Bmp, Mem);
+
+  Reader.Free;
+  Result := True;
+end;
+
+function CHE_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
+var Reader: TPV_Reader;
+    Mem: TC64Mem;
+begin
+  if (Str.Size < 19432) or (Str.size > 50000) then Exit(False);
+
+  Reader := TPV_Reader.Create(Str);
+
+  Reader.Offset := $4BE8 + 2;
+  Mem.BgColor := Reader.GetU;
+
+  Reader.Offset := $4200 + 2;
+  Reader.get(Mem.ScreenRAM, 1000);
+
+  Reader.Offset := $4800 + 2;
+  Reader.get(Mem.ColorRAM, 1000);
+
+  Reader.Offset := $0000 + 2;
+  Reader.get(Mem.Bitmap, 8000);
+
+  DecodeMulticolor(Bmp, Mem);
+
+  Reader.Free;
+  Result := True;
+end;
+
+function CWG_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
+var Reader: TPV_Reader;
+    Mem: TC64Mem;
+begin
+  if (Str.Size <> 10007) then Exit(False);
+
+  Reader := TPV_Reader.Create(Str);
+
+  Reader.Offset := $2711 + 2;
+  Mem.BgColor := Reader.GetU;
+
+  Reader.Offset := $1F40 + 2;
+  Reader.get(Mem.ScreenRAM, 1000);
+
+  Reader.Offset := $2328 + 2;
+  Reader.get(Mem.ColorRAM, 1000);
+
+  Reader.Offset := $0000 + 2;
+  Reader.get(Mem.Bitmap, 8000);
+
+  DecodeMulticolor(Bmp, Mem);
+
+  Reader.Free;
+  Result := True;
+end;
+
+function DOL_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
+var Reader: TPV_Reader;
+    Mem: TC64Mem;
+begin
+  if (Str.Size <> 10242) then Exit(False);
+
+  Reader := TPV_Reader.Create(Str);
+
+  Reader.Offset := $07E8 + 2;
+  Mem.BgColor := Reader.GetU;
+
+  Reader.Offset := $400 + 2;
+  Reader.get(Mem.ScreenRAM, 1000);
+
+  Reader.Offset := $0000 + 2;
+  Reader.get(Mem.ColorRAM, 1000);
+
+  Reader.Offset := $0800 + 2;
+  Reader.get(Mem.Bitmap, 8000);
+
+  DecodeMulticolor(Bmp, Mem);
+
+  Reader.Free;
+  Result := True;
+end;
+
+function DRZ_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
+var Reader: TPV_Reader;
+    Mem: TC64Mem;
+begin
+  if (Str.Size <> 10051) then Exit(False);
+
+  Reader := TPV_Reader.Create(Str);
+
+  Reader.Offset := $2740 + 2;
+  Mem.BgColor := Reader.GetU;
+
+  Reader.Offset := $0400 + 2;
+  Reader.get(Mem.ScreenRAM, 1000);
+
+  Reader.Offset := $0000 + 2;
+  Reader.get(Mem.ColorRAM, 1000);
+
+  Reader.Offset := $0800 + 2;
+  Reader.get(Mem.Bitmap, 8000);
+
+  DecodeMulticolor(Bmp, Mem);
+
+  Reader.Free;
+  Result := True;
+end;
+
+function FPT_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
+var Reader: TPV_Reader;
+    Mem: TC64Mem;
+begin
+  if (Str.Size <> 10004) then Exit(False);
+
+  Reader := TPV_Reader.Create(Str);
+
+  Reader.Offset := $2712 + 2;
+  Mem.BgColor := Reader.GetU;
+
+  Reader.Offset := $1F40 + 2;
+  Reader.get(Mem.ScreenRAM, 1000);
+
+  Reader.Offset := $2328 + 2;
+  Reader.get(Mem.ColorRAM, 1000);
+
+  Reader.Offset := $0000 + 2;
+  Reader.get(Mem.Bitmap, 8000);
+
+  DecodeMulticolor(Bmp, Mem);
+
+  Reader.Free;
+  Result := True;
+end;
+
+function GIG_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
+var Reader: TPV_Reader;
+    Mem: TC64Mem;
+begin
+  if (Str.Size <> 10003) then Exit(False);
+
+  Reader := TPV_Reader.Create(Str);
+
+  Reader.Offset := $2710 + 2;
+  Mem.BgColor := Reader.GetU;
+
+  Reader.Offset := $1F40 + 2;
+  Reader.get(Mem.ScreenRAM, 1000);
+
+  Reader.Offset := $2328 + 2;
+  Reader.get(Mem.ColorRAM, 1000);
+
+  Reader.Offset := $0000 + 2;
+  Reader.get(Mem.Bitmap, 8000);
+
+  DecodeMulticolor(Bmp, Mem);
+
+  Reader.Free;
+  Result := True;
+end;
+
+function IPT_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
+var Reader: TPV_Reader;
+    Mem: TC64Mem;
+begin
+  if (Str.Size <> 10003) then Exit(False);
+
+  Reader := TPV_Reader.Create(Str);
+
+  Reader.Offset := $2710 + 2;
+  Mem.BgColor := Reader.GetU;
+
+  Reader.Offset := $1F40 + 2;
+  Reader.get(Mem.ScreenRAM, 1000);
+
+  Reader.Offset := $2328 + 2;
+  Reader.get(Mem.ColorRAM, 1000);
+
+  Reader.Offset := $0000 + 2;
+  Reader.get(Mem.Bitmap, 8000);
+
+  DecodeMulticolor(Bmp, Mem);
+
+  Reader.Free;
+  Result := True;
+end;
+
+function ISM_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
+var Reader: TPV_Reader;
+    Mem: TC64Mem;
+begin
+  if (Str.Size <> 10218) then Exit(False);
+
+  Reader := TPV_Reader.Create(Str);
+
+  Reader.Offset := $27E7 + 2;
+  Mem.BgColor := Reader.GetU;
+
+  Reader.Offset := $2400 + 2;
+  Reader.get(Mem.ScreenRAM, 1000);
+
+  Reader.Offset := $0000 + 2;
+  Reader.get(Mem.ColorRAM, 1000);
+
+  Reader.Offset := $0400 + 2;
+  Reader.get(Mem.Bitmap, 8000);
+
+  DecodeMulticolor(Bmp, Mem);
+
+  Reader.Free;
+  Result := True;
+end;
+
+function MIL_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
+var Reader: TPV_Reader;
+    Mem: TC64Mem;
+begin
+  if (Str.Size <> 10022) then Exit(False);
+
+  Reader := TPV_Reader.Create(Str);
+
+  Reader.Offset := $07E4 + 2;
+  Mem.BgColor := Reader.GetU;
+
+  Reader.Offset := $0014 + 2;
+  Reader.get(Mem.ScreenRAM, 1000);
+
+  Reader.Offset := $03FC + 2;
+  Reader.get(Mem.ColorRAM, 1000);
+
+  Reader.Offset := $07E4 + 2;
+  Reader.get(Mem.Bitmap, 8000);
+
+  DecodeMulticolor(Bmp, Mem);
+
+  Reader.Free;
+  Result := True;
+end;
+
+function OCP_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
+var Reader: TPV_Reader;
+    Mem: TC64Mem;
+begin
+  if (Str.Size <> 10018) then Exit(False);
+
+  Reader := TPV_Reader.Create(Str);
+
+  Reader.Offset := $2329 + 2;
+  Mem.BgColor := Reader.GetU;
+
+  Reader.Offset := $1F40 + 2;
+  Reader.get(Mem.ScreenRAM, 1000);
+
+  Reader.Offset := $2338 + 2;
+  Reader.get(Mem.ColorRAM, 1000);
+
+  Reader.Offset := $0000 + 2;
+  Reader.get(Mem.Bitmap, 8000);
+
+  DecodeMulticolor(Bmp, Mem);
+
+  Reader.Free;
+  Result := True;
+end;
+
+function P64_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
+var Reader: TPV_Reader;
+    Mem: TC64Mem;
+begin
+  if (Str.Size <> 10050) then Exit(False);
+
+  Reader := TPV_Reader.Create(Str);
+
+  Reader.Offset := $07FF + 2;
+  Mem.BgColor := Reader.GetU;
+
+  Reader.Offset := $0400 + 2;
+  Reader.get(Mem.ScreenRAM, 1000);
+
+  Reader.Offset := $0000 + 2;
+  Reader.get(Mem.ColorRAM, 1000);
+
+  Reader.Offset := $0800 + 2;
+  Reader.get(Mem.Bitmap, 8000);
+
+  DecodeMulticolor(Bmp, Mem);
+
+  Reader.Free;
+  Result := True;
+end;
+
+function PI_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
+var Reader: TPV_Reader;
+    Mem: TC64Mem;
+begin
+  if (Str.Size <> 10242) then Exit(False);
+
+  Reader := TPV_Reader.Create(Str);
+
+  Reader.Offset := $1F80 + 2;
+  Mem.BgColor := Reader.GetU;
+
+  Reader.Offset := $2000 + 2;
+  Reader.get(Mem.ScreenRAM, 1000);
+
+  Reader.Offset := $2400 + 2;
+  Reader.get(Mem.ColorRAM, 1000);
+
+  Reader.Offset := $0000 + 2;
+  Reader.get(Mem.Bitmap, 8000);
+
+  DecodeMulticolor(Bmp, Mem);
+
+  Reader.Free;
+  Result := True;
+end;
+
+function PMG_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
+var Reader: TPV_Reader;
+    Mem: TC64Mem;
+    val: Byte;
+begin
+  if (Str.Size < 9000) or (Str.Size > 12000) then Exit(False);
+
+  Reader := TPV_Reader.Create(Str);
+
+  Reader.Offset := $1FB2 + 2;
+  Mem.BgColor := Reader.GetU;
+
+  Reader.Offset := $2072 + 2;
+  Reader.get(Mem.ScreenRAM, 1000);
+
+  Reader.Offset := $1FB5 + 2;
+  val := Reader.getU;
+  FillChar(Mem.ColorRAM, 1000, val);
+
+  Reader.Offset := $0072 + 2;
+  Reader.get(Mem.Bitmap, 8000);
+
+  DecodeMulticolor(Bmp, Mem);
+
+  Reader.Free;
+  Result := True;
+end;
+
+function RP_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
+var Reader: TPV_Reader;
+    Mem: TC64Mem;
+begin
+  if (Str.Size < 9000) or (Str.Size > 12000) then Exit(False);
+
+  Reader := TPV_Reader.Create(Str);
+
+  Reader.Offset := $23FF + 2;
+  Mem.BgColor := Reader.GetU;
+
+  Reader.Offset := $0000 + 2;
+  Reader.get(Mem.ScreenRAM, 1000);
+
+  Reader.Offset := $2400 + 2;
+  Reader.get(Mem.ColorRAM, 1000);
+
+  Reader.Offset := $0400 + 2;
+  Reader.get(Mem.Bitmap, 8000);
+
+  DecodeMulticolor(Bmp, Mem);
+
+  Reader.Free;
+  Result := True;
+end;
+
+function RPM_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
+ var Reader: TPV_Reader;
+    Mem: TC64Mem;
+begin
+  if (Str.Size <> 10006) then Exit(False);
+
+  Reader := TPV_Reader.Create(Str);
+
+  Reader.Offset := $2710 + 2;
+  Mem.BgColor := Reader.GetU;
+
+  Reader.Offset := $1F40 + 2;
+  Reader.get(Mem.ScreenRAM, 1000);
+
+  Reader.Offset := $2328 + 2;
+  Reader.get(Mem.ColorRAM, 1000);
+
+  Reader.Offset := 2;
+  Reader.get(Mem.Bitmap, 8000);
+
+  DecodeMulticolor(Bmp, Mem);
 
   Reader.Free;
   Result := True;
@@ -1817,72 +2498,25 @@ end;
 
 function KOA_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
 var Reader: TPV_Reader;
-    Width, Height: Integer;
-    x,y: Integer;
-    R,G,B,A: Byte;
-    i,j: Integer;
-    pal: array[0..1999, 0..3] of Byte;
-    colodore: array[0..15] of Cardinal = (
-
-    $000000,$ffffff,$96282e,$5bd6ce,
-    $9f2dad,$41b936,$2724c4,$eff347,
-    $9f4815,$5e3500,$da5f66,$474747,
-    $787878,$91ff84,$6864ff,$aeaeae
-
-    );
-    bgColor: Byte;
+    Mem: TC64Mem;
 begin
   if (Str.Size <> 10003) then Exit(False);
 
   Reader := TPV_Reader.Create(Str);
 
-  Reader.GetU2;
-
-  Bmp.SetSize(320, 200);
-
   Reader.Offset := 10002;
-  BgColor := Reader.GetU;
+  Mem.BgColor := Reader.GetU;
 
   Reader.Offset := 8002;
+  Reader.get(Mem.ScreenRAM, 1000);
 
-  for i:=0 to 15 do begin
-    B := colodore[i] and $FF;
-    G := (colodore[i] shr 8) and $FF;
-    R := (colodore[i] shr 16) and $FF;
-
-    Bmp.AddPal(R,G,B,255);
-  end;
-
-  //screen ram
-  for i:=0 to 999 do begin
-    G := Reader.GetU;
-
-    pal[i][1] := G shr 4;
-    pal[i][2] := G and $F;
-  end;
-
-  //color ram
-  for i:=0 to 999 do begin
-    G := Reader.GetU;
-
-    pal[i][3] := G and $F;
-    pal[i][0] := bgColor;
-  end;
+  Reader.Offset := 9002;
+  Reader.get(Mem.ColorRAM, 1000);
 
   Reader.Offset := 2;
+  Reader.get(Mem.Bitmap, 8000);
 
-  for y:=0 to 24 do
-  for x:=0 to 39 do
-  for j:=0 to 7 do begin
-    G := Reader.GetU;
-
-    for i:=0 to 3 do begin
-      B := GetBits(G, 6-2*i, 2);
-
-      Bmp.SetPal(x*8 + 2*i, y*8 + j, pal[y*40 + x][B]);
-      Bmp.SetPal(x*8 + 2*i+1, y*8 + j, pal[y*40 + x][B]);
-    end;
-  end;
+  DecodeMulticolor(Bmp, Mem);
 
   Reader.Free;
   Result := True;
@@ -6960,9 +7594,37 @@ initialization
   BitmapFormats.Add('msp', @MSP_Read, @MSP_Write, 'Microsoft Paint'); //Paint v.1, v.2
 
   BitmapFormats.Add('vzi', @VZI_Read, nil, 'Atari VZI');
-  BitmapFormats.Add('koa', @KOA_Read, nil, 'Koala Painter');
   BitmapFormats.Add('wzl', @WZL_Read, nil, 'Winzle Puzzle');
+
+  BitmapFormats.Add('koa', @KOA_Read, nil, 'Koala Painter');
+  BitmapFormats.Add('drz', @DRZ_Read, nil, 'Drazpaint');
+  BitmapFormats.Add('rpm', @RPM_Read, nil, 'Run Paint');
+  BitmapFormats.Add('rp',  @RP_Read,  nil, 'Rainbow Painter');
+  BitmapFormats.Add('pmg', @PMG_Read, nil, 'Paint Magic');
+  BitmapFormats.Add('pi',  @PI_Read,  nil, 'Blazing Paddles');
+  BitmapFormats.Add('p64', @P64_Read, nil, 'Picasso 64');
+  BitmapFormats.Add('ocp', @OCP_Read, nil, 'Advanced Art Studio');
+  BitmapFormats.Add('mil', @MIL_Read, nil, 'Micro Illustrator');
+  BitmapFormats.Add('ism', @ISM_Read, nil, 'Image System');
+  BitmapFormats.Add('ipt', @IPT_Read, nil, 'Interpaint Multicolor');
+  BitmapFormats.Add('gig', @GIG_Read, nil, 'Gigapaint Multicolor');
+  BitmapFormats.Add('fpt', @FPT_Read, nil, 'Face Painter');
+  BitmapFormats.Add('dol', @DOL_Read, nil, 'Dolphin Ed');
+  BitmapFormats.Add('cwg', @CWG_Read, nil, 'Create with Garfield');
+  BitmapFormats.Add('che', @CHE_Read, nil, 'Cheese');
+  BitmapFormats.Add('cdu', @CDU_Read, nil, 'CDU-Paint');
+  BitmapFormats.Add('a64', @A64_Read, nil, 'Artist 64');
+
   BitmapFormats.Add('iph', @IPH_Read, nil, 'Interpaint');
+  BitmapFormats.Add('mon', @MON_Read, nil, 'Mono Magic');
+  BitmapFormats.Add('ish', @ISH_Read, nil, 'Image System');
+  BitmapFormats.Add('hed', @HED_Read, nil, 'Hi-Eddi');
+  BitmapFormats.Add('hir', @HIR_Read, nil, 'Hires-Bitmap');
+  BitmapFormats.Add('hbm', @HIR_Read, nil, 'Hires-Bitmap');
+  BitmapFormats.Add('gih', @GIH_Read, nil, 'Gigapaint-Hires');
+  BitmapFormats.Add('gcd', @GCD_Read, nil, 'Gigacad');
+  BitmapFormats.Add('fgs', @FGS_Read, nil, 'Fun Graphics Machine');
+  BitmapFormats.Add('dd',  @DD_Read,  nil, 'Doodle');
 
   BitmapFormats.Add('565', @A565_Read, @A565_Write, 'OLPC 565');
   BitmapFormats.Add('73i', @A73I_Read, nil, 'Texas Instruments');
