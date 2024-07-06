@@ -40,14 +40,17 @@ type
      function GetMF: Single; inline; //Single
      function GetV: Int64; inline; //variable-length integer
 
+     function GetLn(UntilCh: String = ''): String;
+
      property Offset: Integer read GetOffset write SetOffset;
      property AtLeast: Integer write SetAtLeast;
+     property Size: Integer read FSize;
 
      function Get(var Buffer; Count: Longint): Longint;
      function GetC: Char; inline;
      function GetNum: Integer;
      function GetWhite: String;
-     function GetS(Count: Integer): String;
+     function GetS(Count: Integer = -1): String;
      procedure Skip(Count: Integer);
      constructor Create(Str: TStream);
    end;
@@ -247,6 +250,43 @@ begin
   end;
 end;
 
+function TPV_Reader.GetLn(UntilCh: String): String;
+var A,B: Integer;
+    Count: Integer;
+    i: Integer;
+begin
+  if UntilCh = '' then begin
+    Count := 10000;
+    if Count > FSize-FPos then Count := FSize-FPos;
+
+    SetLength(Result, Count);
+    Move(Buf[FPos], Result[1], Count);
+
+    A := 0;
+    for i:=1 to Length(Result) do
+      if (Result[i] = #13) or (Result[i] = #10) then begin
+        A := i;
+        break;
+      end;
+
+    Result := Copy(Result, 1, A-1);
+    Inc(FPos, A);
+    Exit;
+  end;
+
+  Count := 10000;
+  if Count > FSize-FPos then Count := FSize-FPos;
+
+  SetLength(Result, Count);
+  Move(Buf[FPos], Result[1], Count);
+
+  A := Pos(UntilCh, Result);
+
+  Result := Copy(Result, 1, A-1);
+  Inc(FPos, A);
+  Exit;
+end;
+
 function TPV_Reader.GetC: Char;
 begin
   Result := chr(Buf[FPos]);
@@ -295,6 +335,8 @@ end;
 
 function TPV_Reader.GetS(Count: Integer): String;
 begin
+  if Count = -1 then Count := FSize;
+
   SetLength(Result, Count);
   Move(Buf[FPos], Result[1], Count);
   Inc(FPos, Count);

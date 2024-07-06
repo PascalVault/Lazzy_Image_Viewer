@@ -60,7 +60,7 @@ object AboutDlg: TAboutDlg
     Height = 15
     Top = 64
     Width = 56
-    Caption = 'version 0.6'
+    Caption = 'version 0.7'
   end
   object Memo1: TMemo
     Left = 32

@@ -66,6 +66,8 @@ type
      procedure SetMono(X,Y: Integer; B: Byte); inline;
      procedure SetRGBA(X,Y: Integer; R,G,B,A: Byte); inline;
      procedure SetRGB(X,Y: Integer; R,G,B: Byte); inline;
+     procedure Set32(X,Y: Integer; Val: Cardinal); inline; overload;
+     procedure Set32(X,Y: Integer; Val: TPal); inline; overload;
 
      procedure SetR(X,Y: Integer; R: Byte); inline;
      procedure SetG(X,Y: Integer; G: Byte); inline;
@@ -151,11 +153,32 @@ type
    procedure cmyk2rgb(C,M,Y,K: Byte; out R,G,B: Byte);
    procedure rgb2yuv(R,G,B: Byte; out Y,U,V: Byte);
 
+   procedure Unrle_AMI(Src: TStream; Dest: TStream; packedSize: Integer);
+   procedure Unrle_GG(Src: TStream; Dest: TStream; packedSize: Integer);
+   procedure Unrle_PAC(Src: TStream; Dest: TStream; idByte, packByte, specialByte: Byte);
+   procedure UnRle_PGC(src: TStream; dest: TStream; packedSize: Integer);
+   procedure UnRle_CPR(src: TStream; dest: TStream; packedSize: Integer);
+
+   procedure Unrle_TGA(Src: TStream; Dest: TStream; packedSize: Integer; unitSize: Integer);
+   procedure Unrle_RGB(Src: TStream; Dest: TStream; packedSize: Integer);
+   procedure Unrle_PCX(Src: TStream; Dest: TStream; packedSize: Integer);
+   procedure Unrle_CUT(Src: TStream; Dest: TStream; packedSize: Integer; unitSize: Integer);
+   procedure Unrle_DLP(Src: TStream; Dest: TStream; packedSize: Integer; escapeByte: Byte);
+   procedure Unrle_PSD(Src: TStream; Dest: TStream; packedSize: Integer; unitSize: Integer = 1); //psd,mac
+   {
+   procedure UnRleLBM(source: TQFile; out dest: TQFile; packedSize: Integer);
+   procedure UnRleBMP8(source: TQFile; out dest: TQFile; packedSize: Integer; width, height: Integer);
+   procedure UnRle4BT(source: TQFile; out dest: TQFile; packedSize: Integer);
+   }
+   function hexInt(hex: String): Integer;
+
 var BitmapFormats: TPV_BitmapFormat;
 
 implementation
 
 uses PV_Grayscale, PV_Palette;
+
+{$INCLUDE RLE.pas}
 
 function MakePix(R, G, B, A: Byte): TPix;
 begin
@@ -254,192 +277,6 @@ begin
   g := clip(gg);
   b := clip(bb);
 end;
-{
-
-function zif_unrle(&source, &dest, packedSize, unitSize) //tga
-begin
-	i = 0;
-	dest = '';
-	while (i<packedSize-1)
-	begin
-		count = ord(source[i]);
-		if (count < 128) //uncompressed
-		begin
-			count = count+1;
-			dest .= substr(source, i+1, unitSize*count);
-			i += unitSize*count+1;
-		end;
-		else
-		begin
-			count = count-128+1;
-			for (k=0; k<count; k++)
-			begin
-				dest .= substr(source, i+1, unitSize);
-			end;
-			i += unitSize+1;
-		end;
-	end;
-end;
-
-function zif_unrle_rgb(&source, &dest, packedSize) //rgb
-begin
-	i = 0;
-	//dest = '';
-	unitSize = 1;
-	while (i<packedSize-1)
-	begin
-		count = ord(source[i]);
-		if (count > 128) //uncompressed
-		begin
-			count = count-128; //+1
-			dest .= substr(source, i+1, unitSize*count);
-			i += unitSize*count+1;
-		end;
-		else
-		begin
-			count = count;//+1
-			for (k=0; k<count; k++)
-			begin
-				dest .= substr(source, i+1, unitSize);
-			end;
-			i += unitSize+1;
-		end;
-	end;
-end;
-function zif_unrle_pcx(&source, &dest, packedSize) //pcx
-begin
-	i = 0;
-	j = 0;
-	dest = '';
-	while (i<packedSize-1)
-	begin
-		count = ord(source[i]);
-		if ((count && 0xC0) == 0xC0) //compressed
-		begin
-			count = (count && 0x3F);
-			buff = source[i+1];
-			i += 2;
-		end;
-		else
-		begin
-			buff = chr(count);
-			count = 1;
-			i++;
-		end;
-		for (k=0; k<count; k++)
-		begin
-			dest .= buff;
-		end;
-	end;
-end;
-
-function zif_unrle_cut(&source, &dest, packedSize, unitSize) //cut
-begin
-	i = 0;
-	dest = '';
-	while (i<packedSize-1)
-	begin
-		count = ord(source[i]);
-		if (count < 128) //uncompressed
-		begin
-			count = count+1;
-			dest .= substr(source, i+1, unitSize*count);
-			i += unitSize*count+1;
-		end;
-		else
-		begin
-			count = count-128+1;
-			for (k=0; k<count; k++)
-			begin
-				dest .= substr(source, i+1, unitSize);
-			end;
-			i += unitSize+1;
-		end;
-	end;
-end;
-
-function zif_unrle_gg(&source, &dest, packedSize) //gg
-begin
-	dest = '';
-	for (i=0; i<packedSize; i++)
-	begin
-		if (source[i] == chr(254))
-		begin
-			dest .= str_pad('', ord(source[i+2]), source[i+1]);
-			i += 2;
-		end;
-		else //uncompressed
-		begin
-			dest .= source[i];
-		end;
-	end;
-end;
-
-function zif_unrle_ami(&source, &dest, packedSize) //ami
-begin
-	dest = '';
-	for (i=0; i<packedSize; i++)
-	begin
-		if (source[i] == chr(194))
-		begin
-			if (source[i+1] == "\0") return 1; //EOF
-
-			dest .= str_pad('', ord(source[i+1]), source[i+2]);
-			i += 2;
-		end;
-		else //uncompressed
-		begin
-			dest .= source[i];
-		end;
-	end;
-end;
-
-function zif_unrle_dlp(&source, &dest, packedSize, escapeByte) //dlp
-begin
-	dest = '  ';
-	for (i=0; i<packedSize; i++)
-	begin
-		if (source[i] == escapeByte)
-		begin
-			dest .= str_pad('', ord(source[i+1]), source[i+2]);
-			i += 2;
-		end;
-		else //uncompressed
-		begin
-			dest .= source[i];
-		end;
-	end;
-end;
-
-function zif_unrle_psd(&source, &dest, packedSize, unitSize = 1) //psd,mac
-begin
-	i = 0;
-	dest = '';
-	while (i<packedSize-1)
-	begin
-		list(,count) = unpack('c', source[i]); //diff from TGA
-		if (count == -128)                       //diff from TGA
-		begin
-			i++;
-		end;
-		else if (count >=0 ) //uncompressed
-		begin
-			count = count+1;
-			dest .= substr(source, i+1, unitSize*count);
-			i += unitSize*count+1;
-		end;
-		else
-		begin
-			count = -1*count+1;
-			for (k=0; k<count; k++)
-			begin
-				dest .= substr(source, i+1, unitSize);
-			end;
-			i += unitSize+1;
-		end;
-	end;
-end;
-}
 
 procedure rgb2cmyk(R,G,B: Byte; out C,M,Y,K: Byte);
 var RR,GG,BB,KK: Extended;
@@ -958,6 +795,7 @@ procedure TPV_Bitmap.SetRGB(X, Y: Integer; R, G, B: Byte);
 begin
   FData[Y* FWidth + X].RGBA := B + (G shl 8) + (R shl 16) + (255 shl 24);
 end;
+
 {$ELSE}
 procedure TPV_Bitmap.SetRGBA(X, Y: Integer; R, G, B, A: Byte);
 begin
@@ -975,6 +813,16 @@ begin
   FData[Y* FWidth + X].A := 255;
 end;
 {$ENDIF}
+
+procedure TPV_Bitmap.Set32(X, Y: Integer; Val: Cardinal);
+begin
+  FData[Y* FWidth + X].RGBA := Val;
+end;
+
+procedure TPV_Bitmap.Set32(X, Y: Integer; Val: TPal);
+begin
+  FData[Y* FWidth + X].RGBA := Val.B + (Val.G shl 8) + (Val.R shl 16) + (255 shl 24);
+end;
 
 procedure TPV_Bitmap.SetR(X, Y: Integer; R: Byte);
 begin
@@ -1066,6 +914,11 @@ begin
   Ext := Copy(ExtractFileExt(Filename), 2);
 
   F := TFileStream.Create(Filename, fmOpenRead or fmShareDenyNone);
+
+  if F.Size < 50 then begin
+    F.Free;
+    Exit;
+  end;
 
   Reader := BitmapFormats.FindReader(Ext, AFormat);
 

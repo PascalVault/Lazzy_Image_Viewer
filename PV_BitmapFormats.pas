@@ -111,7 +111,7 @@ begin
   BB := B;
 end;
 
-procedure Unrle_Psd(Reader: TPV_Reader; UnpackedSize: Integer; Str: TStream);
+procedure Unrle_Psd(Src: TStream; UnpackedSize: Integer; Str: TStream);
 var LengthOfLine: Word;
     Saved, Count: Integer;
     Temp,Val: Byte;
@@ -119,18 +119,18 @@ var LengthOfLine: Word;
 begin
   Saved := 0;
   repeat
-    Temp := Reader.GetU;
+    Temp := Src.ReadByte;
 
     If Temp >= 128 then begin
       Count := 256 - Temp;
-      Val := Reader.GetU;
+      Val := Src.ReadByte;
 
       for i:=0 to Count do Str.Write(Val, 1);
       Inc(Saved, Count+1);
     end
     else begin
       Count := Temp;
-      for i:=0 to Count do Str.Write(Reader.GetU, 1);
+      for i:=0 to Count do Str.Write(Src.ReadByte, 1);
       Inc(Saved, Count+1);
     end;
   until Saved >= UnpackedSize;
@@ -237,6 +237,1697 @@ begin
   end;
 end;
 
+
+procedure UnGzip(Data: TStream; Result: TStream); //gzdecode from PHP
+const BuffSize = 4096;
+var Z: TDecompressionStream;
+    Read: Integer;
+    Buff: array of Byte;
+
+    ID: Word;
+    Method: Byte;
+    Head: Word;
+    Date: Cardinal;
+    Flag, OS: Byte;
+    Skip: Word;
+    Tmp: String;
+    Null: Integer;
+begin
+  ID     := Data.ReadWord;
+  Method := Data.ReadByte;
+  Head   := Data.ReadByte;
+  Date   := Data.ReadDWord;
+  Flag   := Data.ReadByte;
+  OS     := Data.ReadByte;
+
+  //FEXTRA
+  if ((Head shr 2) and 1 = 1) then begin
+    Skip := Data.ReadByte;
+    Data.Position := Data.Position + Skip;
+  end;
+
+  //FNAME
+  if ((Head shr 3) and 1 = 1) then begin
+    SetLength(Tmp, 256);
+    Data.Read(Tmp[1], 256);
+    Null := Pos(chr(0), Tmp);
+    Data.Position := Data.Position - Length(Tmp) + Null;
+  end;
+
+  //FCOMMENT
+  if ((Head shr 4) and 1 = 1) then begin
+    SetLength(Tmp, 256);
+    Data.Read(Tmp[1], 256);
+    Null := Pos(chr(0), Tmp);
+    Data.Position := Data.Position - Length(Tmp) + Null;
+  end;
+
+  //FHCRC
+  if ((Head shr 1) and 1 = 1) then begin
+    Data.Position := Data.Position + Skip;
+  end;
+
+  //https://datatracker.ietf.org/doc/html/rfc1952#page-5
+  Z := TDecompressionStream.Create(Data, True);
+  SetLength(Buff, BuffSize);
+
+  try
+    repeat
+      Read := Z.Read(Buff[0], BuffSize);
+      Result.Write(Buff[0], Read);
+    until Read<BuffSize-1;
+  finally
+    Z.Free;
+  end;
+end;
+
+function A4MI_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
+
+//Atari 4MI
+var Reader: TPV_Reader;
+    Width, Height: Integer;
+    R,G,B,A: Byte;
+    x,y: Integer;
+pal: array[0..3] of Byte;
+begin
+  Reader := TPV_Reader.Create(Str);
+
+  if (Str.size <> 244) then begin
+    Reader.Free;
+    Exit(False);
+  end;
+
+  Bmp.SetSize(16, 240);
+
+  Reader.get(pal, 4);
+
+  for y:=0 to Bmp.Height-1 do
+  for x:=0 to Bmp.Width-1 do Bmp.Set32(x, y, atariPal[0]);
+
+  for y:=0 to Bmp.Height-1 do begin
+     g := Reader.getU;
+
+    for x:=0 to 3 do begin
+      a := getBits(g, 2*x, 2);
+
+      if (a=2) or (a=3) then Bmp.Set32(4*x,   y, atariPal[pal[x]] );
+      if (a=3) or (a=1) then Bmp.Set32(4*x+1, y, atariPal[pal[x]] );
+    end;
+  end;
+
+  Result := True;
+  Reader.Free;
+end;
+
+function A4PL_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
+
+//Atari 4PL
+var Reader: TPV_Reader;
+    Width, Height: Integer;
+    R,G,B,A: Byte;
+    x,y: Integer;
+i: Integer;
+    pal: array[0..3] of Byte;
+begin
+  Reader := TPV_Reader.Create(Str);
+
+  if (Str.size <> 964) then begin
+    Reader.Free;
+    Exit(False);
+  end;
+
+  //Format sklada sie z 4 paskow pionowych. Kazdy pasek ma 8 pikseli (1bajt)
+  //szerokosci i pomiedzy nimi sa 2 piksele "prozni"
+  //Poniewaz wysokosc to 240 pikseli, wiec kazdy pasek zajmuje 240 bajtow
+  //Pierwsze 4 bajty to paleta- po 1 bajcie dla kazdego paska
+  //Ta paleta to tak naprawde indeks do palety atariPal
+
+  Bmp.SetSize(40, 240);
+
+  Reader.get(pal, 4);
+
+  for i:=0 to 255 do
+    Bmp.AddPal(atariPal[i].r, atariPal[i].g, atariPal[i].b, 255);
+
+  for y:=0 to Bmp.Height-1 do
+  for x:=0 to Bmp.Width-1 do Bmp.SetPal(x, y, 0);
+
+  for x:=0 to 3 do
+  for y:=0 to Bmp.Height-1 do begin
+      g := Reader.getU;
+
+      for i:=0 to 7 do begin
+        a := getBits(g, 7-i, 1);
+
+        if a=1 then Bmp.SetPal(10*x + i, y, pal[x]);
+      end;
+  end;
+
+  Result := True;
+  Reader.Free;
+end;
+
+
+function PAM_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
+
+//Portable Arbitrary Map
+
+const colors: array[0..1] of Cardinal = ($FF000000, $FFFFFFFF);
+var Reader: TPV_Reader;
+    Width, Height: Integer;
+    R,G,B,A: Byte;
+    x,y: Integer;
+    i: Integer;
+    id, line, type1: String;
+    version, type2: Byte;
+    maxVal, depth: Integer;
+    temp: TStringList;
+    bpp: Integer;
+begin
+  Reader := TPV_Reader.Create(Str);
+
+  id := Reader.getLn;
+  version := strToInt(id[2]);
+
+  if (id[1] <> 'P') or (version <> 7) then begin
+    Reader.Free;
+    Exit(False);
+  end;
+
+  //read header
+  temp := TStringList.Create;
+
+  for i:=0 to 99 do begin
+    line := Reader.getLn;
+    if line = '' then continue;
+    if line[1] <> '#' then temp.add(line);
+    if line = 'ENDHDR' then break;
+  end;
+
+  temp.text := StringReplace(temp.text, ' ', '=', [rfReplaceAll]);
+
+  width  := strToInt(temp.Values['WIDTH']);
+  height := strToInt(temp.Values['HEIGHT']);
+  maxVal := strToInt(temp.Values['MAXVAL']); //255
+  depth  := strToInt(temp.Values['DEPTH']); //3
+  type1  := temp.Values['TUPLTYPE']; //RGB
+  type1  := UpperCase(type1);
+
+  if type1 = 'BLACKANDWHITE_ALPHA'  then type2 := 4
+  else if type1 = 'BLACKANDWHITE'   then type2 := 1
+  else if type1 = 'GRAYSCALE_ALPHA' then type2 := 5
+  else if type1 = 'GRAYSCALE'       then type2 := 2
+  else if type1 = 'RGB_ALPHA'       then type2 := 6
+  else if type1 = 'RGB'             then type2 := 3
+  else begin
+    //Unsupported type: ' + type1
+    Reader.Free;
+    Exit(False);
+  end;
+
+  Bmp.SetSize(width, height);
+
+  for y:=0 to height-1 do
+  for x:=0 to width-1 do
+    case (type2) of
+      1: begin
+           g := Reader.getU;
+           Bmp.Set32(x, y, colors[g]);
+         end;
+      2: begin
+           g := Reader.getU;
+           Bmp.SetRGBA(x, y, g, g, g, 255);
+         end;
+      3: begin
+           r := Reader.getU;
+           g := Reader.getU;
+           b := Reader.getU;
+           Bmp.SetRGBA(x, y, r, g, b, 255);
+         end;
+      4: begin
+           g := Reader.getU;
+           a := Reader.getU;
+           Bmp.Set32(x, y, colors[g]);     //TODO: use alfa
+         end;
+      5: begin
+           g := Reader.getU;
+           a := Reader.getU;
+           Bmp.SetRGBA(x, y, g, g, g, a);
+         end;
+      6: begin
+           r := Reader.getU;
+           g := Reader.getU;
+           b := Reader.getU;
+           a := Reader.getU;
+           Bmp.SetRGBA(x, y, r, g, b, a);
+         end;
+    end;
+
+  case (type2) of
+    1,4: bpp := 1;
+    2,5: bpp := 8;
+    3,6: bpp := 24;
+  end;
+
+
+  Result := True;
+  Reader.Free;
+end;
+
+function FITS_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
+
+//Flexible Image Transport System
+var Reader: TPV_Reader;
+    Width, Height: Integer;
+    R,G,B,A: Byte;
+    x,y: Integer;
+    i: Integer;
+    temp: TStringList;
+    p: Integer;
+    line: String;
+begin
+  Reader := TPV_Reader.Create(Str);
+
+  //read head
+  temp := TStringList.Create;
+
+  for i:=0 to 99 do begin
+    line := Reader.getS(80);
+    if pos('END', line) > 0 then break;
+    if pos('HISTORY', line) = 1 then temp.add(line)
+    else begin
+      p := pos('=', line);
+      temp.add(trim(copy(line, 1, p-1)) + '=' + trim(Copy(line, p+1)));
+    end;
+  end;
+
+  if (temp.Values['SIMPLE'] = '') then begin
+    Reader.Free;
+    Exit(False);
+  end;
+
+  width  := strToInt(temp.values['NAXIS1']);
+  height := strToInt(temp.values['NAXIS2']);
+  Bmp.SetSize(width, height);
+
+  //read the body
+  Str.position := 2880;
+
+  for y:=height-1 downto 0 do
+  for x:=0 to width-1 do begin
+    g := Reader.getU;
+    Bmp.SetRGB(x, y, g, g, g);
+  end;
+
+  Result := True;
+  Reader.Free;
+end;
+
+
+function G10_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
+
+//Atari G10
+var Reader: TPV_Reader;
+    Width, Height: Integer;
+    R,G,B,A: Byte;
+    x,y: Integer;
+    i: Integer;
+    pal: array[0..8] of TPal;
+    Bmp2: TPV_Bitmap;
+    half: Integer;
+begin
+  if Str.size <> 7689 then begin
+    Exit(False);
+  end;
+
+  Reader := TPV_Reader.Create(Str);
+
+  Bmp2 := TPV_Bitmap.Create;
+  Bmp.SetSize(2*80, 2*48);
+  Bmp2.SetSize(Bmp.Width, Bmp.Height);
+
+  //read pallete- at the end of file
+  Reader.offset := Reader.size - 9;
+
+  for i:=0 to 8 do
+    pal[i] := atariPal[Reader.getU];
+
+  Reader.offset := 0;
+
+  for y:=0 to Bmp2.Height-1 do
+  for x:=0 to (Bmp2.Width div 2)-1 do begin
+      g := Reader.getU;
+
+      for i:=0 to 1 do begin
+        a := getBits(g, 4-4*i, 4);
+        Bmp2.SetRGB(2*x + i, y, pal[a].R, pal[a].G, pal[a].B);
+      end;
+  end;
+
+  //the picture in Bmp2 is in fact 2 pictures- one on the left, one on the right
+  //we need to merge them
+  Half := Bmp.Width div 2;
+  for y:=0 to Bmp.Height-1 do
+  for x:=0 to Half-1 do begin
+    Bmp[2*x,    y] := Bmp2[x,      y];
+    Bmp[2*x + 1,y] := Bmp2[x+Half, y];
+  end;
+
+  Bmp2.Free;
+
+  Result := True;
+  Reader.Free;
+end;
+
+
+function INP_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
+
+//Atari INP
+var Reader: TPV_Reader;
+    Width, Height: Integer;
+    R,G,B,A: Byte;
+    GG: Byte;
+    x,y: Integer;
+    i,k: Integer;
+    pal: array of Byte;
+    palLen: Byte;
+    buff,buff2: array[0..7999] of Byte;
+    P: TPix;
+    S: TPal;
+begin
+  Reader := TPV_Reader.Create(Str);  //Future: more strict recognition
+
+  if (Str.size<16000) or (Str.size > 17000) then begin
+    Reader.Free;
+    Exit(False);
+  end;
+
+  Reader.AtLeast := 160*200;
+
+  Bmp.SetSize(160, 200);
+
+  Reader.offset := 16000;
+
+  palLen := Reader.size - Reader.offset;
+  setLength(pal, palLen);
+  Reader.get(pal[0], palLen);
+
+  for i:=0 to palLen-1 do pal[i] := pal[i] - (pal[i] mod 2);
+
+  for y:=0 to Bmp.Height-1 do
+    for x:=0 to Bmp.Width-1 do
+      Bmp.SetRGB(x,y, 0,0,0);
+
+ //read 2 images, each is 8000 bytes in size
+ //then merge them so NewBmp[x,y] := (Bmp1[x,y] + Bmp2[x,y]) div 2;
+
+ Reader.offset := 0;
+
+ for k:=0 to 1 do begin
+    for y:=0 to Bmp.Height-1 do
+    for x:=0 to (Bmp.Width div 4)-1 do begin
+        gg := Reader.getU;
+
+        for i:=0 to 3 do begin
+          a := getBits(gg, 6-2*i, 2);
+
+          P := Bmp[4*x + i, y];
+          S := atariPal[pal[a]];
+
+          R := P.R + (S.R div 2);
+          G := P.G + (S.G div 2);
+          B := P.B + (S.B div 2);
+
+          Bmp.SetRGB(4*x + i, y, R,G,B);
+        end;
+    end;
+  end;
+
+  Result := True;
+  Reader.Free;
+end;
+
+
+function MIC_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
+
+//Movie Maker Background
+var Reader: TPV_Reader;
+    Width, Height: Integer;
+    R,G,B,A: Byte;
+    x,y: Integer;
+    i: Integer;
+    pal: array[0..3] of Byte;
+   size: Cardinal;
+begin
+  Bmp.SetSize(160, 192);
+
+  size := Str.size mod 40;
+
+  if (size <> 0) and (size <> 3) and (size <> 4) and (size <> 5) then begin
+    Exit(False);
+  end;
+
+  Reader := TPV_Reader.Create(Str);
+
+  case Str.size mod 40 of
+    0,3: begin
+           pal[0] := 0;
+           pal[1] := 4;
+           pal[2] := 8;
+           pal[3] := 12;
+         end;
+    4  : begin
+           Reader.offset := Reader.size - 4;
+           Reader.get(pal, 4);
+         end;
+    5  : begin
+           Reader.offset := Reader.size - 6;
+           Reader.get(pal, 4);
+         end;
+  end;
+
+  Reader.offset := 0;
+
+  for y:=0 to 191 do
+  for x:=0 to 39 do begin
+    b := Reader.getU;
+    for i:=0 to 3 do begin
+      g := getBits(b, 6-(2*i), 2);
+      Bmp.Set32(4*x+i, y, atariPal[pal[g]]);
+    end;
+  end;
+
+  Result := True;
+  Reader.Free;
+end;
+
+function MIS_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
+
+//Atari MIS
+var Reader: TPV_Reader;
+    Width, Height: Integer;
+    R,G,B,A: Byte;
+    x,y: Integer;
+i: Integer;
+    index: Byte;
+    buff: array[0..255] of Byte;
+begin
+  Reader := TPV_Reader.Create(Str);
+
+  if (Str.size <> 241) and (Str.size <> 61) then begin
+    Reader.Free;
+    Exit(False);
+  end;
+
+  Bmp.SetSize(2, 240);
+
+  index := Reader.getU;
+
+  for i:=0 to 255 do Bmp.AddPal(atariPal[i].R, atariPal[i].G, atariPal[i].B, 255);
+
+  for y:=0 to Bmp.Height-1 do
+  for x:=0 to Bmp.Width-1 do Bmp.SetPal(x,y, 0);
+
+
+  for y:=0 to (Bmp.Height div 4)-1 do begin
+     g := Reader.getU;
+
+    for i:=0 to 3 do begin
+      a := getBits(g, 6-2*i, 2);
+
+      if getBits(a, 1, 1) = 1 then Bmp.SetPal(0, 4*y+i, index);
+      if getBits(a, 0, 1) = 1 then Bmp.SetPal(1, 4*y+i, index);
+    end;
+  end;
+
+   Result := True;
+  Reader.Free;
+end;
+
+function MTV_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
+
+//MTV / RayShade Image
+
+var Reader: TPV_Reader;
+    width, height: Integer;
+    x,y: Integer;
+    R,G,B,A: Byte;
+begin
+  Reader := TPV_Reader.Create(Str);
+
+  width  := StrToIntDef(Reader.getLn(' '), 0);
+  height := StrToIntDef(Reader.getLn(), 0);
+  Reader.getU;
+
+  if (width < 1) or (height < 1) then begin
+    Reader.Free;
+    Exit(False);
+  end;
+
+  if (width > 3000) or (height > 3000) then begin
+    Reader.Free;
+    Exit(False);
+  end;
+
+  Bmp.SetSize(width, height);
+
+  for y:=0 to height-1 do
+  for x:=0 to width-1 do begin
+    r := Reader.getU;
+    g := Reader.getU;
+    b := Reader.getU;
+    Bmp.SetRGB(x, y, r, g, b);
+  end;
+
+  Result := True;
+  Reader.Free;
+end;
+
+function OTB_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
+
+//Nokia Over The Air
+
+const colors: array[0..1] of Cardinal = ($FF66CC66, $FF000000);
+var Reader: TPV_Reader;
+    Width, Height: Integer;
+    R,G,B,A: Byte;
+    x,y: Integer;
+    i, j: Integer;
+    buff, temp: String;
+    id, colorss: Integer;
+begin
+  Reader := TPV_Reader.Create(Str);
+
+  buff := Reader.getS;
+
+  if (copy(buff, 0, 2) = '00') then begin //must be hex file
+    temp := StringReplace(buff, ' ', '', [rfReplaceAll]);
+    buff := '';
+    for i:=1 to system.length(temp) do
+      buff := buff + chr(hexInt(copy(temp, i*2-1, 2)));
+  end;
+
+  id     := ord(buff[1]);
+  width  := ord(buff[2]);
+  height := ord(buff[3]);
+  colorss:= ord(buff[4]);
+
+  if (id <> 0) and (colorss <> 1) then begin
+    Reader.Free;
+    Exit(False);
+  end;
+
+  if (width>3000) or (height>3000) then begin
+      Reader.Free;
+      Exit(False);
+    end;
+
+  Bmp.SetSize(width, height);
+
+  j := 5;
+  for y:=0 to height-1 do
+  for x:=0 to (width div 8)-1 do begin
+    b := ord(buff[j]);
+    inc(j);
+    for i:=0 to 7 do begin
+      g := getBits(b, 7-i, 1);
+      Bmp.Set32(8*x+i, y, colors[g]);
+    end;
+  end;
+
+
+  Result := True;
+  Reader.Free;
+end;
+
+function PGX_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
+
+//PGX (JPEG 2000)
+
+var Reader: TPV_Reader;
+    Width, Height: Integer;
+    R,G,B,A: Byte;
+    x,y: Integer;
+    id: String;
+    p: Integer;
+    unk, w, h: String;
+begin
+  Reader := TPV_Reader.Create(Str);
+
+  id := Reader.getS(6);
+
+  if (id <> 'PG ML ') and (id <> 'PG LM ') then begin
+     Reader.Free;
+     Exit(False);
+   end;
+
+  unk := Reader.getLn(' ');
+  w := Reader.getLn(' ');
+  h := Reader.getLn;
+
+  p := pos(' ', h);
+  if (p > 0) then begin
+    w := copy(h, 1, p-1);
+    h := copy(h, p+1, 99);
+  end;
+
+  Width := StrToInt(w);
+  Height := StrToInt(h);
+
+  Bmp.SetSize(Width, Height);
+
+  for y:=0 to Bmp.Height-1 do
+  for x:=0 to Bmp.Width-1 do begin
+    g := Reader.getU;
+
+    Bmp.SetRGBA(x, y, g, g, g, 255);
+  end;
+
+  Result := True;
+  Reader.Free;
+end;
+
+
+function PI2_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
+
+//Degas/Degas Elite
+var Reader: TPV_Reader;
+    Width, Height: Integer;
+    R,G,B,A: Byte;
+    x,y: Integer;
+    i: Integer;
+    p: Integer;
+    pp: array[0..1] of Integer;
+    resolution: Integer;
+    pal: array[0..15] of Tpix;
+begin
+  Reader := TPV_Reader.Create(Str);
+
+  if (Str.size < 32000) or (Str.size > 35000) then begin
+    Reader.Free;
+    Exit(False);
+  end;
+
+  resolution := Reader.getMU2;
+
+  for i:=0 to 15 do begin
+    p := Reader.getMU2;
+
+    pal[i].R := round(getBits(p, 8, 3)*36.25);
+    pal[i].G := round(getBits(p, 4, 3)*36.25);
+    pal[i].B := round(getBits(p, 0, 3)*36.25);
+  end;
+
+  Bmp.SetSize(640, 200);
+
+  for y:=0 to bmp.height-1 do
+  for x:=0 to 39 do  begin
+    pp[0] := Reader.getMU2;
+    pp[1] := Reader.getMU2;
+    for i:=0 to 15 do begin //make 16 Bmp.Pixels from 2*int16
+      p := (getBits(pp[1], 15-i, 1) shl 1) +
+           (getBits(pp[0], 15-i, 1)     );
+
+      Bmp.SetRGBA(16*x+i, y, pal[p].r, pal[p].g, pal[p].b, 255);
+    end;
+  end;
+
+  Result := True;
+  Reader.Free;
+end;
+
+
+function PI3_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
+
+//Degas/Degas Elite
+var Reader: TPV_Reader;
+    Width, Height: Integer;
+    R,G,B,A: Byte;
+    x,y: Integer;
+    i: Integer;
+    resolution: Integer;
+    P: Integer;
+    pal: array[0..15] of TPix;
+begin
+  if (Str.size <> 32034) and (Str.size <> 32066) then begin
+    Exit(False);
+  end;
+
+  Reader := TPV_Reader.Create(Str);
+
+  resolution := Reader.getU2; //MU2
+
+  for i:=0 to 15 do begin
+    p := Reader.getMU2;
+
+    pal[i].R := round(getBits(p, 8, 3)*36.25);
+    pal[i].G := round(getBits(p, 4, 3)*36.25);
+    pal[i].B := round(getBits(p, 0, 3)*36.25);
+  end;
+
+  Bmp.SetSize(640, 400);
+
+  for y:=0 to bmp.height-1 do
+  for x:=0 to (bmp.width div 8)-1 do
+  begin
+    b := Reader.getU;
+    for i:=0 to 7 do begin
+      g := getBits(b, 7-i, 1);
+
+      Bmp.SetRGBA(8*x+i, y, pal[g].r, pal[g].g, pal[g].b, 255);
+    end;
+  end;
+
+  Result := True;
+  Reader.Free;
+end;
+
+
+function PLA_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
+
+//Atari PLA
+var Reader: TPV_Reader;
+    Width, Height: Integer;
+    R,G,B,A: Byte;
+    x,y: Integer;
+i: Integer;
+    index: Integer;
+begin
+  Reader := TPV_Reader.Create(Str);
+
+  //This format is basically just 1 row from 4PL
+  if (Str.size <> 241) then begin
+  Reader.Free;
+  Exit(False);
+  end;
+
+  Bmp.SetSize(8, 240);
+  index := Reader.getU;
+
+  for i:=0 to 255 do Bmp.AddPal(atariPal[i].R, atariPal[i].G, atariPal[i].B, 255);
+
+  for y:=0 to Bmp.Height-1 do
+  for x:=0 to Bmp.Width-1 do Bmp.SetPal(x,y, 0);
+
+  for y:=0 to Bmp.Height-1 do begin
+      g := Reader.getU;
+
+      for i:=0 to 7 do begin
+        a := getBits(g, 7-i, 1);
+        if a=1 then Bmp.SetPal(10*x + i, y, index);
+      end;
+  end;
+
+   Result := True;
+  Reader.Free;
+end;
+
+
+function PS1_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
+
+//ST-DEXL Pictures Set
+
+const index: Integer = 0;
+var Reader: TPV_Reader;
+    Width, Height: Integer;
+    R,G,B,A: Byte;
+    x,y: Integer;
+    i, num: Integer;
+    pal: array[0..15] of TPix;
+    count, c: Integer;
+    p: array[0..3] of Integer;
+begin
+  Reader := TPV_Reader.Create(Str);
+
+  count := Reader.getU2; //number of images
+
+  for i:=0 to count-1 do begin
+    num := Reader.getU2;
+
+    if num <> i then begin
+      Reader.Free;
+      Exit(False);
+    end;
+  end;
+
+  Reader.offset := 2+count*2 + index*32032;
+
+  for i:=0 to 15 do begin
+    c := Reader.getMU2;
+    pal[i].r := getBits(c, 8, 3)*36;
+    pal[i].g := getBits(c, 4, 3)*36;
+    pal[i].b := getBits(c, 0, 3)*36;
+  end;
+
+  Bmp.SetSize(320, 200);
+
+  for y:=0 to Bmp.height-1 do
+  for x:=0 to 19 do  begin
+    p[0] := Reader.getMU2;
+    p[1] := Reader.getMU2;
+    p[2] := Reader.getMU2;
+    p[3] := Reader.getMU2;
+    for i:=0 to 15 do begin //make 16 Bmp.Pixels from 4*int16
+      b := (getBits(p[3], 15-i, 1) shl 3) +
+           (getBits(p[2], 15-i, 1) shl 2) +
+           (getBits(p[1], 15-i, 1) shl 1) +
+           (getBits(p[0], 15-i, 1)     );
+
+      Bmp.SetRGBA( 16*x+i, y, pal[b].r, pal[b].g, pal[b].b, 255);
+    end;
+  end;
+
+  Result := True;
+  Reader.Free;
+end;
+
+
+function SCT_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
+
+//SciTex
+
+var Reader: TPV_Reader;
+    Width, Height: Integer;
+    R,G,B,A: Byte;
+    x,y: Integer;
+    i: Integer;
+    id: String;
+    bpp: Integer;
+    buffR, buffG, buffB: array of Byte;
+begin
+  Reader := TPV_Reader.Create(Str);
+
+  Reader.getS(80);
+  id := Reader.getS(2);
+
+  if (id <> 'CT') then begin
+    Reader.Free;
+    Exit(False);
+  end;
+
+
+  Reader.offset:= Reader.offset + 942+32+1;
+  height := strToInt(Reader.getS(11));
+
+  Reader.offset := Reader.offset + 1;
+  width := strToInt(Reader.getS(11));
+  Reader.offset := Reader.offset + 968;
+
+  Bmp.SetSize(width, height);
+
+  if width*height*3 > Reader.size then bpp := 8
+  else                                 bpp := 24;
+
+  if bpp = 8 then begin
+    setLength(buffG, width);
+
+    for y:=0 to height-1 do begin
+      Reader.get(buffG, width);
+
+      for x:=0 to width-1 do begin
+        g := buffG[x];
+        Bmp.SetRGBA(x, y, g, g, g, 255);
+      end;
+    end;
+  end
+  else begin
+    setLength(buffR, width);
+    setLength(buffG, width);
+    setLength(buffB, width);
+
+    for y:=0 to height-1 do begin
+      Reader.get(buffR, width);
+      Reader.get(buffG, width);
+      Reader.get(buffB, width);
+
+      for x:=0 to width-1 do begin
+        r := buffR[x];
+        g := buffG[x];
+        b := buffB[x];
+        Bmp.SetRGBA(x, y, r, g, b, 255);
+      end;
+    end;
+  end;
+
+  Result := True;
+  Reader.Free;
+end;
+
+
+function SHC_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
+//SAMAR Hi-res (Atari)
+const colors: array[0..3] of Byte = (115, 87, 73, 45);
+var Reader: TPV_Reader;
+    Width, Height: Integer;
+    R,G,B,A: Byte;
+    x,y: Integer;
+    i,j: Integer;
+    index: Integer;
+    buff: array[0..122880-1] of Byte;
+begin
+  Reader := TPV_Reader.Create(Str);  if Str.size <>  17920 then begin
+    Reader.Free;
+  Exit(False);
+  end;
+
+  for i:=0 to 15360-1 do begin
+    g := Reader.getU;
+    for j:=0 to 7 do
+      buff[i*8 + j] := getBits(g, 7-j, 1);
+  end;
+
+  j := 0;
+  Bmp.SetSize(320, 192);
+
+  for y:=0 to Bmp.Height-1 do
+  for x:=0 to Bmp.Width-1 do begin
+
+    a := colors[ buff[j] + 2*buff[61440+j]];
+    Bmp.SetRGBA(x, y, a,a,a,255);
+
+    Inc(j);
+  end;
+
+  Result := True;
+  Reader.Free;
+end;
+
+
+function SHP_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
+
+//Movie Maker Shape
+var Reader: TPV_Reader;
+    Width, Height: Integer;
+    R,G,B,A: Byte;
+    x,y: Integer;
+    i: Integer;
+    pal: array[0..3] of TPal;
+begin
+  Reader := TPV_Reader.Create(Str);
+
+  if Str.size <> 4384 then begin
+    Reader.Free;
+    Exit(False);
+  end;
+
+  Bmp.SetSize(160, 96);
+
+  Str.position := Str.size - 16;
+
+  for i:=0 to 3 do begin
+    pal[i] := AtariPal[Reader.getU];
+  end;
+
+  Str.position := 528;
+  for y:=0 to 95 do
+  for x:=0 to 39 do begin
+    b := Reader.getU;
+    for i:=0 to 3 do begin
+      g := getBits(b, 6-(2*i), 2);
+      Bmp.SetRGBA(4*x+i, y, pal[g].r, pal[g].g, pal[g].b, 255);
+    end;
+  end;
+
+  Result := True;
+  Reader.Free;
+end;
+
+function SKA_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
+
+//Video renting box SKA
+
+var Reader: TPV_Reader;
+    Width, Height: Integer;
+    R,G,B,A: Byte;
+    x,y: Integer;
+    i: Integer;
+    pal: array[0..255] of TPix;
+    p: TPix;
+begin
+  Reader := TPV_Reader.Create(Str);
+
+  width  := Reader.getU2;
+  height := Reader.getU2;
+  Reader.getU2;
+  Reader.getU2;
+  Reader.getI;
+
+  if Str.size <> width*height +768+9 then begin
+    Reader.Free;
+    Exit(False);
+  end;
+
+  for i:=0 to 255 do begin
+    pal[i].r := Reader.getU;
+    pal[i].g := Reader.getU;
+    pal[i].b := Reader.getU;
+  end;
+
+  Bmp.SetSize(width, height);
+
+  for y:=0 to height-1 do
+   for x:=0 to width-1 do begin
+    p := pal[Reader.getU];
+    Bmp.SetRGBA(x, y, p.r, p.g, p.b, 255);
+  end;
+
+  Result := True;
+  Reader.Free;
+end;
+
+
+function V2I_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
+const colors: array[0..1] of Cardinal = ($FFFFFFFF, $FF000000);
+var Reader: TPV_Reader;
+    Width, Height: Integer;
+    R,G,B,A: Byte;
+    x,y: Integer;
+    i: Integer;
+    id: String;
+begin
+  Reader := TPV_Reader.Create(Str);
+
+  id       := Reader.getS(8);
+
+  if (id <> '**TI92P*') then begin
+    Reader.Free;
+    Exit(False);
+  end;
+
+  Reader.offset := Reader.size - 3090 - 3;
+
+  width := 240;
+  height := 103;
+
+  Bmp.SetSize(width, height);
+
+  for y:=0 to height-1 do
+  for x:=0 to (width div 8)-1 do begin
+    b := Reader.getU;
+    for i:=0 to 7 do begin
+      g := getBits(b, 7-i, 1);
+      Bmp.Set32(8*x+i, y, colors[g]);
+    end;
+  end;
+
+  Result := True;
+  Reader.Free;
+end;
+
+
+
+function PI4_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
+var Reader: TPV_Reader;
+    i,j: Integer;
+    Width, Height: Integer;
+    x,y: Integer;
+    A,R,G,B: Byte;
+    p: Word;
+    pp: array[0..7] of Word;
+    resolution: Integer;
+    offset: Integer;
+    color: cardinal;
+begin
+  if (Str.size <> 77824) and (Str.Size <> 154114) then begin
+    Exit(False);
+  end;
+
+  Reader := TPV_Reader.Create(Str);
+
+  case Str.Size of
+    77824: height := 240;
+    154114: height := 480;
+  end;
+
+  if height = 480 then begin
+      resolution := Reader.getMU2;
+
+      for i:=0 to 255 do begin
+        p := Reader.getMU2;
+
+        R := round(getBits(p, 8, 3)*36.25);
+        G := round(getBits(p, 4, 3)*36.25);
+        B := round(getBits(p, 0, 3)*36.25);
+
+        Bmp.AddPal(R,G,B,255);
+      end;
+  end
+  else begin
+
+      for i:=0 to 255 do begin
+        r := reader.getU;
+        g := reader.getU;
+        a := reader.getU;
+        b := reader.getU;
+
+        Bmp.AddPal(R,G,B,255);
+      end;
+
+  end;
+
+
+  Reader.AtLeast := 320*240*2;
+
+  Bmp.SetSize(320, height);
+
+  Reader.offset := Reader.Size - 320*height;
+
+  for y:=0 to bmp.height-1 do
+  for x:=0 to 19 do  begin
+    pp[0] := Reader.getMU2;
+    pp[1] := Reader.getMU2;
+    pp[2] := Reader.getMU2;
+    pp[3] := Reader.getMU2;
+    pp[4] := Reader.getMU2;
+    pp[5] := Reader.getMU2;
+    pp[6] := Reader.getMU2;
+    pp[7] := Reader.getMU2;
+    for i:=0 to 15 do begin //make 16 Bmp.Pixels from 4*int16
+      G := (getBits(pp[7], 15-i, 1) shl 7) +
+           (getBits(pp[6], 15-i, 1) shl 6) +
+           (getBits(pp[5], 15-i, 1) shl 5) +
+           (getBits(pp[4], 15-i, 1) shl 4) +
+           (getBits(pp[3], 15-i, 1) shl 3) +
+           (getBits(pp[2], 15-i, 1) shl 2) +
+           (getBits(pp[1], 15-i, 1) shl 1) +
+           (getBits(pp[0], 15-i, 1)     );
+
+      Bmp.SetPal(16*x+i, y, G);
+    end;
+  end;
+
+  Result := True;
+  Reader.Free;
+end;
+
+
+function PI7_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
+var Reader: TPV_Reader;
+    i,j: Integer;
+    Width, Height: Integer;
+    x,y: Integer;
+    A,R,G,B: Byte;
+    p: Word;
+    pp: array[0..7] of Word;
+    resolution: Integer;
+    offset: Integer;
+    color: cardinal;
+begin
+  if (Str.size <> 308224) then begin
+    Exit(False);
+  end;
+
+  Reader := TPV_Reader.Create(Str);
+
+  case Str.Size of
+    308224: height := 480;
+  end;
+
+  for i:=0 to 255 do begin
+    r := reader.getU;
+    g := reader.getU;
+    a := reader.getU;
+    b := reader.getU;
+
+    Bmp.AddPal(R,G,B,255);
+  end;
+
+
+  Reader.AtLeast := 640*240*2;
+
+  Bmp.SetSize(640, height);
+
+  Reader.offset := Reader.Size - 640*height;
+
+  for y:=0 to bmp.height-1 do
+  for x:=0 to 39 do  begin
+    pp[0] := Reader.getMU2;
+    pp[1] := Reader.getMU2;
+    pp[2] := Reader.getMU2;
+    pp[3] := Reader.getMU2;
+    pp[4] := Reader.getMU2;
+    pp[5] := Reader.getMU2;
+    pp[6] := Reader.getMU2;
+    pp[7] := Reader.getMU2;
+    for i:=0 to 15 do begin //make 16 Bmp.Pixels from 4*int16
+      G := (getBits(pp[7], 15-i, 1) shl 7) +
+           (getBits(pp[6], 15-i, 1) shl 6) +
+           (getBits(pp[5], 15-i, 1) shl 5) +
+           (getBits(pp[4], 15-i, 1) shl 4) +
+           (getBits(pp[3], 15-i, 1) shl 3) +
+           (getBits(pp[2], 15-i, 1) shl 2) +
+           (getBits(pp[1], 15-i, 1) shl 1) +
+           (getBits(pp[0], 15-i, 1)     );
+
+      Bmp.SetPal(16*x+i, y, G);
+    end;
+  end;
+
+  Result := True;
+  Reader.Free;
+end;
+
+
+function PI8_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
+var Reader: TPV_Reader;
+    Width, Height: Integer;
+    R,G,B,A: Byte;
+    x,y: Integer;
+    i, colors: Integer;
+    Mem: TMemoryStream;
+    id: String;
+    len: Integer;
+    Buff: array of Byte;
+begin
+
+  if Str.Size <> 7685 then begin
+    Exit(False);
+  end;
+
+  Reader := TPV_Reader.Create(Str);
+
+  Bmp.SetSize(320, 192);
+
+  for y:=0 to Bmp.Height-1 do
+  for x:=0 to (Bmp.Width div 8)-1 do begin
+    g := Reader.getU;
+
+    for i:=0 to 7 do begin
+      a := getBits(g, 7-i, 1);
+
+      Bmp.SetMono(8*x + i, y, 1-a);
+    end;
+  end;
+
+  Result := True;
+  Reader.Free;
+end;
+
+function PI9_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
+var Reader: TPV_Reader;
+    i,j: Integer;
+    Width, Height: Integer;
+    x,y: Integer;
+    A,R,G,B: Byte;
+    p: Word;
+    pp: array[0..7] of Word;
+    resolution: Integer;
+    offset: Integer;
+    color: cardinal;
+begin
+  if (Str.size <> 65024) and (Str.size <> 77824) then begin
+    Exit(False);
+  end;
+
+  Reader := TPV_Reader.Create(Str);
+
+  case Str.Size of
+    65024: height := 200;
+    77824: height := 240;
+  end;
+
+  for i:=0 to 255 do begin
+    r := reader.getU;
+    g := reader.getU;
+    a := reader.getU;
+    b := reader.getU;
+
+    Bmp.AddPal(R,G,B,255);
+  end;
+
+
+  Reader.AtLeast := 320*240*2;
+
+  Bmp.SetSize(320, height);
+
+  Reader.offset := Reader.Size - 320*height;
+
+  for y:=0 to bmp.height-1 do
+  for x:=0 to 19 do  begin
+    pp[0] := Reader.getMU2;
+    pp[1] := Reader.getMU2;
+    pp[2] := Reader.getMU2;
+    pp[3] := Reader.getMU2;
+    pp[4] := Reader.getMU2;
+    pp[5] := Reader.getMU2;
+    pp[6] := Reader.getMU2;
+    pp[7] := Reader.getMU2;
+    for i:=0 to 15 do begin //make 16 Bmp.Pixels from 4*int16
+      G := (getBits(pp[7], 15-i, 1) shl 7) +
+           (getBits(pp[6], 15-i, 1) shl 6) +
+           (getBits(pp[5], 15-i, 1) shl 5) +
+           (getBits(pp[4], 15-i, 1) shl 4) +
+           (getBits(pp[3], 15-i, 1) shl 3) +
+           (getBits(pp[2], 15-i, 1) shl 2) +
+           (getBits(pp[1], 15-i, 1) shl 1) +
+           (getBits(pp[0], 15-i, 1)     );
+
+      Bmp.SetPal(16*x+i, y, G);
+    end;
+  end;
+
+  Result := True;
+  Reader.Free;
+end;
+
+function PI5_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
+var Reader: TPV_Reader;
+    i,j: Integer;
+    Width, Height: Integer;
+    x,y: Integer;
+    A,R,G,B: Byte;
+    p: Word;
+    pp: array[0..3] of Word;
+    resolution: Integer;
+begin
+  if Str.size <> 153634 then begin
+    Exit(False);
+  end;
+
+  Reader := TPV_Reader.Create(Str);
+
+  resolution := Reader.getMU2;
+
+  for i:=0 to 15 do begin
+    p := Reader.getMU2;
+
+    R := round(getBits(p, 8, 3)*36.25);
+    G := round(getBits(p, 4, 3)*36.25);
+    B := round(getBits(p, 0, 3)*36.25);
+
+    Bmp.AddPal(R,G,B,255);
+  end;
+
+  Reader.AtLeast := 640*480+100;
+
+  Bmp.SetSize(640, 480);
+
+  for y:=0 to bmp.height-1 do
+  for x:=0 to 39 do  begin
+    pp[0] := Reader.getMU2;
+    pp[1] := Reader.getMU2;
+    pp[2] := Reader.getMU2;
+    pp[3] := Reader.getMU2;
+    for i:=0 to 15 do begin //make 16 Bmp.Pixels from 4*int16
+      G := (getBits(pp[3], 15-i, 1) shl 3) +
+           (getBits(pp[2], 15-i, 1) shl 2) +
+           (getBits(pp[1], 15-i, 1) shl 1) +
+           (getBits(pp[0], 15-i, 1)     );
+
+      Bmp.SetPal(16*x+i, y, G);
+    end;
+  end;
+
+  Result := True;
+  Reader.Free;
+end;
+
+function PGC_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
+var Reader: TPV_Reader;
+    Width, Height: Integer;
+    R,G,B,A: Byte;
+    x,y: Integer;
+    i, colors: Integer;
+    Mem: TMemoryStream;
+    id: String;
+    len: Integer;
+    Buff: array of Byte;
+begin
+  Reader := TPV_Reader.Create(Str);
+  id := Reader.getS(3);
+  Reader.Free;
+
+  if id <> 'PG'#01 then begin
+    Exit(False);
+  end;
+
+  Str.Position := 3;
+  Mem := TMemoryStream.Create;
+  Unrle_PGC(Str, Mem, Str.Size-Str.Position); //TODO: brak funkcji
+  Mem.Position := 0;
+
+  Reader := TPV_Reader.Create(Mem);
+
+  Bmp.SetSize(240, 64);
+
+  for y:=0 to Bmp.Height-1 do
+  for x:=0 to (Bmp.Width div 8)-1 do begin
+    g := Reader.getU;
+
+    for i:=0 to 7 do begin
+      a := getBits(g, 7-i, 1);
+
+      Bmp.SetMono(8*x + i, y, a);
+    end;
+  end;
+
+  Result := True;
+  Mem.Free;
+  Reader.Free;
+end;
+
+function PAC_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
+const BuffSize = 30;
+var Reader: TPV_Reader;
+    Width, Height: Integer;
+    R,G,B,A: Byte;
+    x,y: Integer;
+    i, colors: Integer;
+    Mem: TMemoryStream;
+    gzip: TDecompressionStream;
+    id: String;
+    len: Integer;
+    Buff: array of Byte;
+    idByte, packByte, specialByte: Byte;
+begin
+  Reader := TPV_Reader.Create(Str);
+
+  id := Reader.getS(4);
+
+  if id <> 'pM86' then begin
+    Reader.Free;
+    Exit(False);
+  end;
+
+  idByte := Reader.getU;
+  packByte := Reader.getU;
+  specialByte := Reader.getU;
+
+  Reader.Free;
+  str.position := 7;
+
+  Mem := TMemoryStream.Create;
+  Unrle_PAC(Str, Mem, idByte, packByte, specialByte);
+  Mem.Position := 0;
+
+
+  Reader := TPV_Reader.Create(Mem);
+  Reader.AtLeast := 640*100;
+
+  Bmp.SetSize(640, 400);
+
+  //DIFFERENT ORDER- first WIDTH then HEIGHT
+  for x:=0 to (Bmp.width div 8)-1 do
+    for y:=0 to Bmp.height-1 do  begin
+      b := Reader.GetU;
+
+      for i:=0 to 7 do begin
+        g := getBits(b, 7-i, 1);
+        Bmp.SetMono(8*x+i, y, g);
+      end;
+  end;
+
+  Result := True;
+  Mem.Free;
+  Reader.Free;
+end;
+
+function CPR_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
+var Reader: TPV_Reader;
+    Width, Height: Integer;
+    R,G,B,A: Byte;
+    x,y: Integer;
+    i, colors: Integer;
+    Mem: TMemoryStream;
+    gzip: TDecompressionStream;
+    id: Integer;
+    len: Integer;
+    Buff: array of Byte;
+begin
+  Reader := TPV_Reader.Create(Str);
+  id := Reader.getU;
+  Reader.Free;
+
+  if id <> 2 then begin
+    Exit(False);
+  end;
+
+  Str.Position := 1;
+  Mem := TMemoryStream.Create;
+  Unrle_CPR(Str, Mem, Str.Size-Str.Position); //TODO: brak funkcji
+  Mem.Position := 0;
+
+  if Mem.Size <> 7680 then begin
+    Mem.Free;
+    Exit(False);
+  end;
+
+  Reader := TPV_Reader.Create(Mem);
+
+  Bmp.SetSize(320, 192);
+
+  for y:=0 to Bmp.Height-1 do
+  for x:=0 to (Bmp.Width div 8)-1 do begin
+    g := Reader.getU;
+
+    for i:=0 to 7 do begin
+      a := getBits(g, 7-i, 1);
+
+      Bmp.SetMono(8*x + i, y, a);
+    end;
+  end;
+
+  Result := True;
+  Mem.Free;
+  Reader.Free;
+end;
+
+function PC1_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
+var Reader: TPV_Reader;
+    Width, Height: Integer;
+    R,G,B,A,GG: Byte;
+    x,y: Integer;
+    i,j, colors: Integer;
+    Mem: TMemoryStream;
+    resolution: Integer;
+    len: Integer;
+    Buff: array of Byte;
+    p: array[1..4,0..39] of Byte;
+begin
+  Reader := TPV_Reader.Create(Str);
+
+  resolution := Reader.getU2;
+
+  if resolution <> 128 then begin
+    Reader.Free;
+    Exit(False);
+  end;
+
+  for i:=0 to 15 do begin
+    gg := Reader.getMU2;
+    r := getBits(gg, 8, 3)*36;
+    g := getBits(gg, 4, 3)*36;
+    b := getBits(gg, 0, 3)*36;
+
+    Bmp.AddPal(r,g,b, 255);
+  end;
+  Reader.Free;
+
+  Str.Position := 17*2;
+  Mem := TMemoryStream.Create;
+  Unrle_PSD(Str, Str.Size-Str.Position, Mem);
+  Mem.Position := 0;
+
+  Reader := TPV_Reader.Create(Mem);
+
+  Bmp.SetSize(320, 200);
+
+  j := 0;
+  for y:=0 to Bmp.height-1 do begin
+    Reader.Get(p[1], 40);
+    Reader.Get(p[2], 40);
+    Reader.Get(p[3], 40);
+    Reader.Get(p[4], 40);
+
+    for x:=0 to 39 do
+    for i:=0 to 7 do begin
+
+      g := (getBits(p[4][x], 7-i, 1) shl 3) +
+           (getBits(p[3][x], 7-i, 1) shl 2) +
+           (getBits(p[2][x], 7-i, 1) shl 1) +
+           (getBits(p[1][x], 7-i, 1)     );
+
+      Bmp.SetPal(8*x+i, y, g);
+    end;
+  end;
+
+  Result := True;
+  Mem.Free;
+  Reader.Free;
+end;
+
+function NGF_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
+const BuffSize = 30;
+var Reader: TPV_Reader;
+    Width, Height: Integer;
+    R,G,B,A: Byte;
+    x,y: Integer;
+    i, colors: Integer;
+    Mem: TMemoryStream;
+    gzip: TDecompressionStream;
+    id: String;
+    len: Integer;
+    Buff: array of Byte;
+begin
+
+  Mem := TMemoryStream.Create;
+  UnGzip(Str, Mem);
+  Mem.Position := 0;
+
+  Reader := TPV_Reader.Create(Mem);
+
+  id := Reader.getS(5);
+  Reader.skip(4);
+
+  if (id <> 'NGF'#2#0) then begin
+    Reader.Free;
+    Mem.Free;
+    Exit(False);
+  end;
+
+  for i:=0 to 39 do begin
+    R := Reader.getU;
+    G := Reader.getU;
+    B := Reader.getU;
+
+    Bmp.AddPal(R,G,B, 255);
+  end;
+
+  //thumb
+  Bmp.SetSize(186, 131);
+
+  for y:=0 to 130 do
+    for x:=0 to 185 do begin
+      b := Reader.getU-200;
+
+      Bmp.SetPal(x,y, b);
+  end;
+
+//  if (thumb) then Exit;
+  Bmp.ClearPalette;
+
+  for i:=0 to 255 do begin
+    R := Reader.getU;
+    G := Reader.getU;
+    B := Reader.getU;
+
+    Bmp.AddPal(R,G,B, 255);
+  end;
+
+  Bmp.SetSize(640, 480);
+
+  for y:=0 to Bmp.Height-1 do
+  for x:=0 to Bmp.Width-1 do begin
+    b := Reader.getU;
+
+    Bmp.SetPal(x,y, b);
+  end;
+
+  Result := True;
+  Mem.Free;
+  Reader.Free;
+end;
+
 function MAC_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
 var x,y: Integer;
     i: Integer;
@@ -270,7 +1961,7 @@ begin
   Mem := TMemoryStream.Create;
 
   for i:=0 to Height-1 do
-    Unrle_Psd(Reader, 72, Mem);
+    Unrle_Psd(Str, 72, Mem);
 
   Reader.Free;
   Mem.Position := 0;
@@ -649,6 +2340,57 @@ begin
 end;
 
 
+function PCL_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
+
+//PCL
+var Reader: TPV_Reader;
+    Width, Height: Integer;
+    R,G,B,A: Byte;
+    x,y: Integer;
+    temp1, temp2: String;
+begin
+  Reader := TPV_Reader.Create(Str);
+
+  Reader.getS(1);
+  Reader.getLn(chr(27)); //E
+  Reader.getLn(chr(27)); //&100
+  Reader.getLn(chr(27)); //&10E
+  Reader.getLn(chr(27)); //&12A
+  Reader.getLn(chr(27)); //*p0x0Y
+  Reader.getLn(chr(27)); //*t72R
+  Reader.getLn('r');     //*r128s64T
+  temp1 := Reader.getLn('s');
+  temp2 := Reader.getLn('T');
+  Reader.getLn(chr(27));
+  Reader.getLn(chr(27)); //*t128h64V
+  Reader.getLn(chr(27)); //*v6W......
+  Reader.getLn(chr(27)); //*r2A
+  Reader.getLn(chr(27)); //*b0M
+  Reader.getLn('W');    //b384W
+
+  width := strToInt(temp1);
+  height := strToInt(temp2);
+
+  Bmp.SetSize(Width, Height);
+
+  if (width > 3000) or (height > 3000) then begin
+    Reader.Free;
+    Exit(False);
+  end;
+
+  for y:=Bmp.Height-1 downto 0 do begin
+    for x:=0 to Bmp.Width-1 do begin
+      r := Reader.getU;
+      g := Reader.getU;
+      b := Reader.getU;
+      Bmp.SetRGBA(x, y, r, g, b, 255);
+    end;
+    Reader.getS(7);
+  end;
+
+  Result := True;
+  Reader.Free;
+end;
 
 procedure BG9_Write(Bmp: TPV_Bitmap; Str: TStream; Compression: Byte);
 var Writer: TPV_Writer;
@@ -889,6 +2631,46 @@ begin
   Writer.Free;
 end;
 
+
+function GFB_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
+
+//Atari GFB
+var Reader: TPV_Reader;
+    Width, Height: Integer;
+    R,G,B,A: Byte;
+    x,y: Integer;
+    i: Integer;
+    index: Integer;
+    magic: String;
+begin
+  Reader := TPV_Reader.Create(Str);
+
+  //might also be 320x200x 4bit, size the same-32 kB or even 64kB with 320x200x8bit
+
+  magic := Reader.getS(4);
+
+  if magic <> 'GF25' then begin
+    Reader.Free;
+    Exit(False);
+  end;
+
+  Bmp.SetSize(640, 400);
+  Reader.Skip(20);
+
+  for y:=0 to Bmp.Height-1 do
+  for x:=0 to (Bmp.Width div 8)-1 do begin
+      g := Reader.getU;
+
+      for i:=0 to 7 do begin
+        a := getBits(g, 7-i, 1);
+        Bmp.SetMono(8*x + i, y, a);
+      end;
+  end;
+
+  Result := True;
+  Reader.Free;
+end;
+
 procedure PIC_Write(Bmp: TPV_Bitmap; Str: TStream; Compression: Byte);
 var Writer: TPV_Writer;
     x,y: Integer;
@@ -1080,6 +2862,98 @@ begin
 
   Bmp2.Free;
   Writer.Free;
+end;
+
+
+function GP_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
+
+//Atari GP
+const colors: array[0..1] of Cardinal = ($FFFFFFFF, $FF000000);
+var Reader: TPV_Reader;
+    Width, Height: Integer;
+    R,G,B,A: Byte;
+    x,y: Integer;
+    i: Integer;
+    index: Integer;
+    id: Byte;
+    pal: array[0..8] of Byte;
+begin
+  Reader := TPV_Reader.Create(Str);
+  id := Reader.getU;
+
+  if (id <> 8) and (id <> 9) and (id <> 10) and (id <> 15) then begin
+    Reader.Free;
+    Exit(False);
+  end;
+
+  case id of
+    8 : begin
+          //Str.position := 10;
+          Reader.Skip(9);
+
+          Bmp.SetSize(320, 192);
+          for y:=0 to Bmp.Height-1 do
+          for x:=0 to Ceil(Bmp.Width/ 8)-1 do begin
+              g := Reader.getU;
+
+              for i:=0 to 7 do begin
+                a := getBits(g, 7-i, 1);
+                Bmp.Set32(8*x + i, y, colors[a]);
+              end;
+          end;
+        end;
+    9 : begin
+          //palette here, perhaps
+          //Str.position := 10;
+          Reader.Skip(9);
+
+          Bmp.SetSize(80, 192);
+          for y:=0 to Bmp.Height-1 do
+          for x:=0 to (Bmp.Width div 2)-1 do begin
+              g := Reader.getU;
+
+              for i:=0 to 1 do begin
+                a := getBits(g, 4-4*i, 4);
+                Bmp.Set32(2*x + i, y, atariPal[a]);
+              end;
+          end;
+        end;
+    10 : begin
+          //palette here, perhaps
+          //Str.position := 10;
+          Reader.Skip(9);
+
+          Bmp.SetSize(160, 192);
+          for y:=0 to Bmp.Height-1 do
+          for x:=0 to (Bmp.Width div 4)-1 do begin
+              g := Reader.getU;
+
+              for i:=0 to 3 do begin
+                a := getBits(g, 6-2*i, 2);
+                Bmp.Set32(4*x + i, y, atariPal[a]);
+              end;
+          end;
+        end;
+    15 : begin
+          //palette here, perhaps
+          //Str.position := 10;
+          Reader.Skip(9);
+
+          Bmp.SetSize(160, 192);
+          for y:=0 to Bmp.Height-1 do
+          for x:=0 to (Bmp.Width div 4)-1 do begin
+              g := Reader.getU;
+
+              for i:=0 to 3 do begin
+                a := getBits(g, 6-2*i, 2);
+                Bmp.Set32(4*x + i, y, atariPal[a]);
+              end;
+          end;
+        end;
+  end;
+
+  Result := True;
+  Reader.Free;
 end;
 
 procedure AAI_Write(Bmp: TPV_Bitmap; Str: TStream; Compression: Byte);
@@ -2470,6 +4344,61 @@ begin
   Result := True;
 end;
 
+
+function SXS_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
+
+//SXS font
+//TODO: ugly implementation
+
+const colors: array[0..1] of Cardinal = ($FF000000, $FFFFFFFF);
+var Reader: TPV_Reader;
+    Width, Height: Integer;
+    R,G,B,A: Byte;
+    x,y: Integer;
+    i,j: Integer;
+    buff: array[0..1023] of Byte;
+    aa,bb,cc,dd,ee: Integer;
+    offset: Integer;
+begin
+  Reader := TPV_Reader.Create(Str);
+
+  if Str.size <> 1030 then begin
+    Reader.Free;
+    Exit(False);
+  end;
+
+  Bmp.SetSize(256, 32);
+
+  Reader.getS(6);
+
+  fillChar(buff, 1024, 0);
+  for i:=0 to 1023 do begin
+    aa := getBits(i, 9, 1) shl 9;
+    bb := getBits(i, 4, 1) shl 8;
+    cc := getBits(i, 0, 3) shl 5;
+    dd := getBits(i, 5, 4) shl 1;
+    ee := getBits(i, 3, 1);
+
+    offset := aa + bb + cc + dd + ee;
+    buff[offset] := Reader.getU;
+  end;
+
+  i := 0;
+  for y:=0 to Bmp.height-1 do
+  for x:=0 to (Bmp.width div 8)-1 do begin
+    bb := buff[i];
+    inc(i);
+    for j:=0 to 7 do begin
+      g := getBits(bb, 7-j, 1);
+
+      Bmp.Set32(8*x+j, y, colors[g]);
+    end;
+  end;
+
+  Result := True;
+  Reader.Free;
+end;
+
 function RPM_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
  var Reader: TPV_Reader;
     Mem: TC64Mem;
@@ -2489,6 +4418,35 @@ begin
 
   Reader.Offset := 2;
   Reader.get(Mem.Bitmap, 8000);
+
+  DecodeMulticolor(Bmp, Mem);
+
+  Reader.Free;
+  Result := True;
+end;
+
+function SAR_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
+var Reader: TPV_Reader;
+    Mem: TC64Mem;
+begin
+  if (Str.Size < 10000) or (Str.Size > 12000) then Exit(False);
+
+  Reader := TPV_Reader.Create(Str);
+
+  Reader.Offset := $03F0 + 2;
+  Mem.BgColor := Reader.GetU;
+
+  Reader.Offset := $0000 + 2;
+  Reader.get(Mem.ScreenRAM, 1000);
+
+  Reader.Offset := $2400 + 2;
+  Reader.get(Mem.ColorRAM, 1000);
+
+  Reader.Offset := $0400 + 2;
+  Reader.get(Mem.Bitmap, 8000);
+
+  //uncertain fix
+  FillChar(Mem.ColorRAM, 1000, 0);
 
   DecodeMulticolor(Bmp, Mem);
 
@@ -2518,6 +4476,106 @@ begin
 
   DecodeMulticolor(Bmp, Mem);
 
+  Reader.Free;
+  Result := True;
+end;
+
+function JJ_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
+var Reader: TPV_Reader;
+    bgColor: Byte;
+    Mem: TC64Mem;
+    Memo: TMemoryStream;
+begin
+  Memo := TMemoryStream.Create;
+  Unrle_GG(Str, Memo, Str.Size);
+  Memo.Position := 0;
+
+  if (Memo.Size < 8000) or (Memo.Size > 10000) then begin
+    Memo.Free;
+    Exit(False);
+  end;
+
+  Reader := TPV_Reader.Create(Memo);
+
+  Reader.Offset := $0000 + 2;
+  Reader.get(Mem.ScreenRAM, 1000);
+
+  Reader.Offset := $0400 + 2;
+  Reader.get(Mem.Bitmap, 8000);
+
+  DecodeHires(Bmp, Mem);
+
+  Memo.Free;
+  Reader.Free;
+  Result := True;
+end;
+
+function GG_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
+var Reader: TPV_Reader;
+    Mem: TC64Mem;
+    Memo: TMemoryStream;
+begin
+  Memo := TMemoryStream.Create;
+  Unrle_GG(Str, Memo, Str.Size);
+  Memo.Position := 0;
+
+  if (Memo.Size < 10003) or (Memo.Size > 11000) then begin
+    Memo.Free;
+    Exit(False);
+  end;
+
+  Reader := TPV_Reader.Create(Memo);
+
+  Reader.Offset := $2710 + 2;
+  Mem.BgColor := Reader.GetU;
+
+  Reader.Offset := $1F40 + 2;
+  Reader.get(Mem.ScreenRAM, 1000);
+
+  Reader.Offset := $2328 + 2;
+  Reader.get(Mem.ColorRAM, 1000);
+
+  Reader.Offset := $0000 + 2;
+  Reader.get(Mem.Bitmap, 8000);
+
+  DecodeMulticolor(Bmp, Mem);
+
+  Memo.Free;
+  Reader.Free;
+  Result := True;
+end;
+
+function AMI_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
+var Reader: TPV_Reader;
+    Mem: TC64Mem;
+    Memo: TMemoryStream;
+begin
+  Memo := TMemoryStream.Create;
+  Unrle_AMI(Str, Memo, Str.Size);
+  Memo.Position := 0;
+
+  if (Memo.Size <> 10259) then begin
+    Memo.Free;
+    Exit(False);
+  end;
+
+  Reader := TPV_Reader.Create(Memo);
+
+  Reader.Offset := $2710 + 2;
+  Mem.BgColor := Reader.GetU;
+
+  Reader.Offset := $1F40 + 2;
+  Reader.get(Mem.ScreenRAM, 1000);
+
+  Reader.Offset := $2328 + 2;
+  Reader.get(Mem.ColorRAM, 1000);
+
+  Reader.Offset := $0000 + 2;
+  Reader.get(Mem.Bitmap, 8000);
+
+  DecodeMulticolor(Bmp, Mem);
+
+  Memo.Free;
   Reader.Free;
   Result := True;
 end;
@@ -7587,16 +9645,78 @@ begin
 end;
 
 //{$INCLUDE MORE.pas}
-{$INCLUDE OKAY.pas}
+//{$INCLUDE OKAY.pas}
 
 initialization
+
+//  BitmapFormats.Add('all', @ALL_Read, nil, '');
+//  BitmapFormats.Add('cip', @CIP_Read, nil, '');
+//  BitmapFormats.Add('hgr', @HGR_Read, nil, '');
+//  BitmapFormats.Add('kps', @KPS_Read, nil, '');
+//  BitmapFormats.Add('mch', @MCH_Read, nil, '');
+//  BitmapFormats.Add('ozb', @OZB_Read, nil, '');
+//  BitmapFormats.Add('ozt', @OZT_Read, nil, '');
+//  BitmapFormats.Add('pgx2', @PGX2_Read, nil, '');
+
+  BitmapFormats.Add('pi4', @PI4_Read, nil, 'Degas Extended');
+  BitmapFormats.Add('pi5', @PI5_Read, nil, 'Degas Extended');  //medium
+  BitmapFormats.Add('pi7', @PI7_Read, nil, 'Degas Extended');
+  BitmapFormats.Add('pi8', @PI8_Read, nil, 'Degas Extended');
+  BitmapFormats.Add('pi9', @PI9_Read, nil, 'Degas Extended');
+
+  BitmapFormats.Add('4mi', @A4MI_Read, nil, 'Atari 4MI');
+  BitmapFormats.Add('4pl', @A4PL_Read, nil, 'Atari 4PL');
+  BitmapFormats.Add('fts', @FITS_Read, nil, 'Flexible Image Transport System');
+  BitmapFormats.Add('fit', @FITS_Read, nil, 'Flexible Image Transport System');
+  BitmapFormats.Add('fits', @FITS_Read, nil, 'Flexible Image Transport System');
+  BitmapFormats.Add('g10', @G10_Read, nil, 'Atari G10');
+  BitmapFormats.Add('gfb', @GFB_Read, nil, 'Atari GFB');
+  BitmapFormats.Add('gp',  @GP_Read, nil, 'Atari GP');
+  BitmapFormats.Add('mic', @MIC_Read, nil, 'Movie Maker Background');
+  BitmapFormats.Add('mis', @MIS_Read, nil, 'Atari Missile');
+  BitmapFormats.Add('mtv', @MTV_Read, nil, 'MTV / RayShade Image ');
+  BitmapFormats.Add('otb', @OTB_Read, nil, 'Nokia Over The Air ');
+  BitmapFormats.Add('pam', @PAM_Read, nil, 'Portable Arbitrary Map ');
+  BitmapFormats.Add('pcl', @PCL_Read, nil, 'PCL');
+  BitmapFormats.Add('pgx', @PGX_Read, nil, 'PGX (JPEG 2000)');
+  BitmapFormats.Add('pi2', @PI2_Read, nil, 'Degas/Degas Elite ');      //medium res
+  BitmapFormats.Add('pi3', @PI3_Read, nil, 'Degas/Degas Elite ');      //high-res
+  BitmapFormats.Add('pla', @PLA_Read, nil, 'Atari PLA ');
+  BitmapFormats.Add('shc', @SHC_Read, nil, 'SAMAR Hi-res');
+  BitmapFormats.Add('v2i', @V2I_Read, nil, 'Voyage 200 ');
+  BitmapFormats.Add('ska', @SKA_Read, nil, 'Video renting box SKA');
+  BitmapFormats.Add('sxs', @SXS_Read, nil, 'SXS font ');
+  BitmapFormats.Add('shp', @SHP_Read, nil, 'Movie Maker Shape');
+  BitmapFormats.Add('inp', @INP_Read, nil, 'Atari INP');
+
+
+  BitmapFormats.Add('ps1', @PS1_Read, nil, 'ST-DEXL Pictures Set'); //no sample
+  BitmapFormats.Add('sct', @SCT_Read, nil, 'SciTex');            //bad
+
+//  BitmapFormats.Add('wrl', @WRL_Read, nil, '');
+
+
+
+
+
+
+  BitmapFormats.Add('pc1', @PC1_Read, nil, 'Degas Elite');
+  BitmapFormats.Add('pac', @PAC_Read, nil, 'Stad PAC');
+  BitmapFormats.Add('cpr', @CPR_Read, nil, 'Atari CPR');
+  BitmapFormats.Add('pgc', @PGC_Read, nil, 'Atari PGC');
+  BitmapFormats.Add('ngf', @NGF_Read, nil, 'Ninell Graphic Format');
   BitmapFormats.Add('mac', @MAC_Read, nil, 'MacPaint');
   BitmapFormats.Add('msp', @MSP_Read, @MSP_Write, 'Microsoft Paint'); //Paint v.1, v.2
 
   BitmapFormats.Add('vzi', @VZI_Read, nil, 'Atari VZI');
   BitmapFormats.Add('wzl', @WZL_Read, nil, 'Winzle Puzzle');
 
+  BitmapFormats.Add('jj',  @JJ_Read,  nil, 'Doodle, packed');
+  BitmapFormats.Add('gg',  @GG_Read,  nil, 'Koala Painter 2, packed');
+  BitmapFormats.Add('ami', @AMI_Read, nil, 'Amica Paint, packed');
+
   BitmapFormats.Add('koa', @KOA_Read, nil, 'Koala Painter');
+  BitmapFormats.Add('sar', @SAR_Read, nil, 'Saracen Paint');
   BitmapFormats.Add('drz', @DRZ_Read, nil, 'Drazpaint');
   BitmapFormats.Add('rpm', @RPM_Read, nil, 'Run Paint');
   BitmapFormats.Add('rp',  @RP_Read,  nil, 'Rainbow Painter');
