@@ -52,7 +52,7 @@ type
      function GetWhite: String;
      function GetS(Count: Integer = -1): String;
      procedure Skip(Count: Integer);
-     constructor Create(Str: TStream);
+     constructor Create(Str: TStream; Length: Integer = -1);
    end;
 
    { TPV_Writer }
@@ -347,11 +347,13 @@ begin
   Inc(FPos, Count);
 end;
 
-constructor TPV_Reader.Create(Str: TStream);
+constructor TPV_Reader.Create(Str: TStream; Length: Integer);
 begin
   FStream := Str;
 
-  FSize := Str.Size;
+  if Length = -1 then FSize := Str.Size
+  else                FSize := Length;
+
   SetLength(Buf, FSize);
   Str.Read(Buf[0], FSize);
 

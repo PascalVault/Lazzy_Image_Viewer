@@ -1,28 +1,5 @@
 {
-procedure UnRleLBM(source: TQFile; out dest: TQFile; packedSize: Integer);
-const unitSize = 1;
-var i: Integer;
-    count: Integer;
-begin
-	i := 0;
-	while (i<packedSize-1) do begin
-   // if i> 100 then break;
-		count := source.readI;
-		if (count >= 0) then begin //uncompressed
-			count := count+1;
-      dest.copyFrom(source, unitSize*count);
-      inc(i, unitSize*count+1);
-		end
-		else if count = -128 then begin
-      inc(i, 1);
-    end
-    else begin
-			count := -count+1;
-      dest.copyRepeat(source, unitSize, count);
-      inc(i, unitSize+1);
-		end;
-  end;
-end;
+
 
 procedure UnRle4BT(source: TQFile; out dest: TQFile; packedSize: Integer);
 const unitSize = 1;
@@ -98,6 +75,40 @@ begin
   end;
 end;
 }
+
+
+procedure UnRle_LBM(src: TStream; dest: TStream; packedSize: Integer);
+const unitSize = 1;
+var i,j: Integer;
+    count: Byte;
+    count2: ShortInt absolute count;
+    buff: array of Byte;
+begin
+  setLength(Buff, unitSize);
+
+  i := 0;
+  while (i<packedSize-1) do begin
+    count := src.ReadByte;
+
+    if (count2 >= 0) then begin //uncompressed
+      count2 := count2+1;
+      dest.copyFrom(src, unitSize*count2);
+      inc(i, unitSize*count2+1);
+    end
+    else if count2 = -128 then begin
+      inc(i, 1);
+    end
+    else begin
+      count2 := -count2+1;
+
+      Src.Read(buff[0], unitSize);
+      for j:=0 to count2-1 do
+        Dest.Write(Buff[0], unitSize);
+
+      inc(i, unitSize+1);
+    end;
+  end;
+end;
 
 procedure UnRle_PGC(src: TStream; dest: TStream; packedSize: Integer);
 const unitSize = 1;

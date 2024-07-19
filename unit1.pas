@@ -25,6 +25,7 @@ type
     Width: Integer;
     Height: Integer;
     Date: TDateTime;
+    Thumb: TBitmap;
   end;
 
   { TFileList }
@@ -38,7 +39,7 @@ type
     constructor Create;
     procedure Clear;
     procedure Add(Name: String; Size: Int64; Date: TDateTime);
-    procedure Edit(Index: Integer; Width,Height: Integer);
+    procedure Edit(Index: Integer; Width,Height: Integer; Thumb: TPV_Bitmap);
     function GetName(Index: Integer): String;
     function Get(Index: Integer; out Info: TFileInfo): Boolean;
   end;
@@ -200,6 +201,7 @@ type
     procedure Contrast_PopElClick(Sender: TObject);
     procedure Brightness_PopElClick(Sender: TObject);
     procedure Desaturate_PopElClick(Sender: TObject);
+    procedure FormResize(Sender: TObject);
     procedure Negate_PopElClick(Sender: TObject);
     procedure RotateLeft_PopElClick(Sender: TObject);
     procedure RotateRight_PopElClick(Sender: TObject);
@@ -286,8 +288,13 @@ type
     procedure OnPanelPaint(Sender: TObject);
     procedure OnGridDrawCell(Sender: TObject; aCol, aRow: Integer;
       aRect: TRect; aState: TGridDrawState);
+    procedure OnGridDrawCellThumb(Sender: TObject; aCol, aRow: Integer;
+      aRect: TRect; aState: TGridDrawState);
     procedure OnGridSelectCell(Sender: TObject; aCol, aRow: Integer;
       var CanSelect: Boolean);
+    procedure OnGridSelectCellThumb(Sender: TObject; aCol, aRow: Integer;
+      var CanSelect: Boolean);
+    procedure OnGridResize(Sender: TObject);
   public
     IsFullscreen: Boolean;
     WinSize: TRect;
@@ -358,10 +365,11 @@ begin
   Inc(FPos);
 end;
 
-procedure TFileList.Edit(Index: Integer; Width, Height: Integer);
+procedure TFileList.Edit(Index: Integer; Width, Height: Integer; Thumb: TPV_Bitmap);
 begin
  FList[Index].Width := Width;
  FList[Index].Height := Height;
+ FList[Index].Thumb := Thumb.ToBitmap;
 end;
 
 function TFileList.GetName(Index: Integer): String;
@@ -401,6 +409,7 @@ procedure TTabSheet.ListFiles(AFilename: String);
 
   k := 0;
   repeat
+
     List.Add(Dir + sr.Name, sr.Size, sr.TimeStamp);
 
     if LowerCase(Dir + sr.Name) = FilenameLow then ListPos := k;
@@ -412,7 +421,7 @@ procedure TTabSheet.ListFiles(AFilename: String);
 
   FindClose(sr);
 
-  Self.DG.RowCount := List.FPos;
+  Self.DG.RowCount := 1;
 end;
 
 { TForm1 }
@@ -469,6 +478,41 @@ begin
   Sheet.DG.Canvas.TextOut(ARect.Left+2, ARect.Top+Topp, Txt);
 end;
 
+procedure TForm1.OnGridDrawCellThumb(Sender: TObject; aCol, aRow: Integer;
+  aRect: TRect; aState: TGridDrawState);
+var Sheet: TTabSheet;
+    Txt: String;
+    FInfo: TFileInfo;
+    FFormat, Resolution: String;
+    Wid,Hei,Topp: Integer;
+    Bmp: TPV_Bitmap;
+    Index: Integer;
+    Grid: TDrawGrid;
+    L: Integer;
+begin
+  Sheet := GetSheet as TTabSheet;
+
+  if Sheet.List = nil then Exit;
+
+  Grid := Sheet.DG;
+
+  Index := ARow * Grid.ColCount + ACol;
+
+  if Index > Sheet.List.FPos-1 then Exit;
+
+  Sheet.List.Get(Index, FInfo);
+
+  L := (ARect.Width - FInfo.Thumb.Width) div 2;
+
+  Sheet.DG.Canvas.Draw(ARect.Left+L, ARect.Top+5, FInfo.Thumb);
+
+  Txt := ExtractFileName(FInfo.Name);
+
+  L := (ARect.Width - Sheet.DG.Canvas.TextWidth(Txt)) div 2;
+
+  Sheet.DG.Canvas.TextOut(ARect.Left+L, ARect.Top + 130, Txt);
+end;
+
 procedure TForm1.OnGridSelectCell(Sender: TObject; aCol, aRow: Integer;
   var CanSelect: Boolean);
 var Sheet: TTabSheet;
@@ -490,6 +534,37 @@ begin
   Sheet.ListPos := ARow-1;
 end;
 
+procedure TForm1.OnGridSelectCellThumb(Sender: TObject; aCol, aRow: Integer;
+  var CanSelect: Boolean);
+var Sheet: TTabSheet;
+    FInfo: TFileInfo;
+    Index: Integer;
+    Grid: TDrawGrid;
+begin
+  Sheet := GetSheet;
+
+  if Sheet.GridActive = False then Exit;
+
+  if Sheet.List = nil then Exit;
+
+  Grid := Sheet.DG;
+
+  Index := ARow * Grid.ColCount + ACol;
+
+  if Index > Sheet.List.FPos-1 then Exit;
+
+  Sheet.List.Get(Index, FInfo);
+
+  if Sheet.Filename <> FInfo.Name then
+    ReOpenImage(FInfo.Name, Sheet, False);
+
+  Sheet.ListPos := Index;
+end;
+
+procedure TForm1.OnGridResize(Sender: TObject);
+begin
+end;
+
 procedure TForm1.FormCreate(Sender: TObject);
 var i: Integer;
 begin
@@ -508,32 +583,8 @@ begin
 end;
 
 procedure TForm1.Button1Click(Sender: TObject);
-var x,y: Integer;
-    P: PByteArray;
-    Result: TBitmap;
 begin
- {
-  Result := TBitmap.Create;
-  Result.PixelFormat := pf32bit;
-  Result.SetSize(500, 500);
 
-
-  for y:=0 to Result.Height-1 do begin
-    P := Result.Scanline[y];
-
-    for x:=0 to Result.Width-1 do begin
-
-      P^[x].R := 0;
-      P^[x].G := 0;
-      P^[x].B := 255;
-      P^[x].A := 255;
-
-    end;
-  end;
-
-  Panel2.Canvas.Draw(0,0, Result);
-  Result.SAveToFile('hej.bmp');
-  Result.Free;  }
 end;
 
 procedure TForm1.DrawGrid1DrawCell(Sender: TObject; aCol, aRow: Integer;
@@ -626,6 +677,11 @@ begin
   SaveUndo;
   GetBmp.Grayscale(256, ddNone);
   Redraw;
+end;
+
+procedure TForm1.FormResize(Sender: TObject);
+begin
+
 end;
 
 procedure TForm1.Negate_PopElClick(Sender: TObject);
@@ -1237,10 +1293,14 @@ end;
 procedure TForm1.Browse_ButtonClick(Sender: TObject);
 var Sheet: TTabSheet;
 begin
-  if NoImage then Exit;
+  if NoImage then begin
+    ErrorBox('Open an image first');
+    Exit;
+  end;
 
   Sheet := GetSheet;
 
+  Sheet.DG.RowCount := Sheet.List.FPos;
   Sheet.DG.Visible := not Sheet.DG.Visible;
 
   if Sheet.DG.Visible then begin
@@ -1408,7 +1468,9 @@ begin
 
       if not Bmp.LoadFromFile(Sheet.List.GetName(i)) then continue;
 
-      Sheet.List.Edit(i, Bmp.Width, Bmp.Height);
+      Bmp.Resize(180,120);
+
+      Sheet.List.Edit(i, Bmp.Width, Bmp.Height, Bmp);
       AllDone := False;
 
       break;
@@ -1569,7 +1631,7 @@ begin
   Rect.Right := 4;
 
   //Sheet.DG.Selection := Rect;
-  Sheet.DG.Row := Row;
+ // Sheet.DG.Row := Row;
 end;
 
 procedure TForm1.OpenImage(Filename: String);
@@ -1611,6 +1673,7 @@ begin
   //Grid.FixedRows := 0;
   Grid.OnDrawCell := @OnGridDrawCell;
   Grid.OnSelectCell := @OnGridSelectCell;
+  Grid.OnResize := @OnGridResize;
   //Grid.DefaultDrawing := False;
   Grid.Options := Grid.Options + [goRowSelect, goColSizing];
   Grid.Enabled := True;

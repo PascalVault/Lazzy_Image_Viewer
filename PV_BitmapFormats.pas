@@ -301,6 +301,132 @@ begin
   end;
 end;
 
+
+function LBM_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
+var Reader: TPV_Reader;
+    Reader2: TPV_Reader;
+    Width, Height: Integer;
+    R,G,B,A: Byte;
+    x,y: Integer;
+    i,k,j: Integer;
+    form, ilbm: String;
+    size: Cardinal;
+    bmWidth, bmHeight, bmX, bmY, bmPlanesCount, bmMasking, bmCompression,
+    bmPad1, bmTransColor, bmXAspect, bmYAspect, bmPageWidth, bmPageHeight: Cardinal;
+    chName: String;
+    chSize: Integer;
+    col: Byte;
+    pal: array[0..255] of TPix;
+    rr: array of Cardinal;
+    gg: Byte;
+    p: TPix;
+    Mem: TMemoryStream;
+begin
+  Reader := TPV_Reader.Create(Str);
+
+  form := Reader.getS(4);
+  size := Reader.getMU4;
+  ilbm := Reader.getS(4);
+
+  if form <> 'FORM' then begin
+    Reader.Free;
+    Exit(False);
+  end;
+
+  if (ilbm <> 'ILBM') and (ilbm <> 'PBM ') then begin
+    Reader.Free;
+    Exit(False);
+  end;
+
+  while Reader.Offset < Reader.Size do begin
+      chName := Reader.getS(4);   //LBM Chunk
+      chSize := Reader.getMU4;
+
+      if chName = 'BMHD' then begin
+            bmWidth       := Reader.getMU2;
+            bmHeight      := Reader.getMU2;
+            bmX           := Reader.getMU2;
+            bmY           := Reader.getMU2;
+            bmPlanesCount := Reader.getU;
+            bmMasking     := Reader.getU;
+            bmCompression := Reader.getU;
+            bmPad1        := Reader.getU;
+            bmTransColor  := Reader.getMU2;
+            bmXAspect     := Reader.getU;
+            bmYAspect     := Reader.getU;
+            bmPageWidth   := Reader.getMU2;
+            bmPageHeight  := Reader.getMU2;
+
+            Bmp.SetSize(bmWidth, bmHeight);
+      end
+      else if chName = 'CMAP' then begin //palette
+            for i:=0 to ceil(chSize/3)-1 do begin
+
+              pal[i].r := Reader.getU;
+              pal[i].g := Reader.getU;
+              pal[i].b := Reader.getU;
+            end;
+      end
+      else if chName = 'BODY' then begin //image body
+
+            Mem := TMemoryStream.Create;
+            Str.Position := Reader.Offset;
+
+            setLength(rr, bmWidth);
+
+            if bmCompression = 1 then begin//RLE
+              Unrle_LBM(Str, Mem, Str.Size-Str.Position);
+              Mem.Position := 0;
+              Reader2 := TPV_Reader.Create(Mem);
+              Reader.Offset := Str.Size;
+            end
+            else begin
+              Reader2 := TPV_Reader.Create(Str, chSize);
+              Reader.Offset := Reader.Offset + chSize;
+            end;
+
+            for y:=0 to bmHeight-1 do begin
+              for i:=0 to bmWidth-1 do rr[i] := 0;
+
+              //showmessage(IntToStr(bmPlanesCount));
+
+              for k:=0 to bmPlanesCount-1 do //for every bitplane
+              for x:=0 to ceil(bmWidth/8)-1 do begin
+                b := Reader2.getU;
+                for j:=0 to 8-1 do begin
+                  gg := getBits(b, (8-1)-j, 1);
+                  rr[8*x + j] := rr[8*x + j] + (gg shl k);
+                end
+              end;
+
+              if bmPlanesCount<9 then
+                for x:=0 to bmWidth-1 do begin
+                  gg := rr[x];
+                  Bmp.SetRGBA(x, y, pal[gg].r, pal[gg].g, pal[gg].b, 255);
+                end
+              else
+                for x:=0 to bmWidth-1 do begin
+                  P.RGBA := rr[x];
+                  Bmp.SetRGBA(x,y, p.B, p.G, p.R, 255);
+                end;
+            end;
+
+            Mem.Free;
+            Reader2.free;
+
+
+          //  break; //TODO: remove
+
+      end  //Other block- ignore
+      else begin
+            Reader.offset := Reader.offset + chSize;
+      end
+    end;
+
+  Result := True;
+  Reader.Free;
+end;
+
 function A4MI_Read(Bmp: TPV_Bitmap; Str: TStream): Boolean;
 
 //Atari 4MI
@@ -9657,6 +9783,9 @@ initialization
 //  BitmapFormats.Add('ozb', @OZB_Read, nil, '');
 //  BitmapFormats.Add('ozt', @OZT_Read, nil, '');
 //  BitmapFormats.Add('pgx2', @PGX2_Read, nil, '');
+
+  BitmapFormats.Add('lbm', @LBM_Read, nil, 'Amiga LBM');
+  BitmapFormats.Add('iff', @LBM_Read, nil, 'Amiga LBM');
 
   BitmapFormats.Add('pi4', @PI4_Read, nil, 'Degas Extended');
   BitmapFormats.Add('pi5', @PI5_Read, nil, 'Degas Extended');  //medium

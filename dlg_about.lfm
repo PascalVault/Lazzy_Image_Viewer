@@ -59,8 +59,8 @@ object AboutDlg: TAboutDlg
     Left = 360
     Height = 15
     Top = 64
-    Width = 56
-    Caption = 'version 0.7'
+    Width = 65
+    Caption = 'version 0.7.1'
   end
   object Memo1: TMemo
     Left = 32

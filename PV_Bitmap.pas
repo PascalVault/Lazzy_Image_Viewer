@@ -165,8 +165,9 @@ type
    procedure Unrle_CUT(Src: TStream; Dest: TStream; packedSize: Integer; unitSize: Integer);
    procedure Unrle_DLP(Src: TStream; Dest: TStream; packedSize: Integer; escapeByte: Byte);
    procedure Unrle_PSD(Src: TStream; Dest: TStream; packedSize: Integer; unitSize: Integer = 1); //psd,mac
+   procedure UnRle_LBM(Src: TStream; Dest: TStream; packedSize: Integer);
+
    {
-   procedure UnRleLBM(source: TQFile; out dest: TQFile; packedSize: Integer);
    procedure UnRleBMP8(source: TQFile; out dest: TQFile; packedSize: Integer; width, height: Integer);
    procedure UnRle4BT(source: TQFile; out dest: TQFile; packedSize: Integer);
    }
